@@ -1,0 +1,2296 @@
+-- =====================================================
+-- 👑 سكربت MOEN_KING - فقاعة أوامر للجميع 👑
+-- =====================================================
+
+local Players = game:GetService("Players")
+local plr = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
+local CoreGui = game:GetService("CoreGui")
+local TeleportService = game:GetService("TeleportService")
+local Lighting = game:GetService("Lighting")
+
+-- ==================== إعدادات السكربت ====================
+local CURRENT_VERSION = "3.2"
+local DISCORD_WEBHOOK_URL = "https://discord.gg/f4SSE82c"
+local SCRIPT_NAME = "moen_king"
+local SCRIPT_OWNER = "Moen_King"
+local DEVELOPER_NAME = "fahad_moen3"
+
+-- ==================== كشف نوع الجهاز ====================
+local isMobile = UserInputService.TouchEnabled and not UserInputService.MouseEnabled
+local camera = workspace.CurrentCamera
+local function getScreenWidth() return camera.ViewportSize.X end
+local function getScreenHeight() return camera.ViewportSize.Y end
+
+-- ==================== متغيرات الهجوم ====================
+local attackRunning = false
+local attackCoroutine = nil
+
+-- ==================== متغيرات الديسكورد ====================
+local discordName = ""
+local discordFile = "Moen_Discord.json"
+
+local function LoadDiscordName()
+    pcall(function()
+        if isfile and isfile(discordFile) then
+            local data = HttpService:JSONDecode(readfile(discordFile))
+            discordName = data.discordName or ""
+        end
+    end)
+end
+
+local function SaveDiscordName(name)
+    pcall(function()
+        writefile(discordFile, HttpService:JSONEncode({discordName = name}))
+        discordName = name
+    end)
+end
+
+LoadDiscordName()
+
+-- ==================== دالة عرض فقاعة للجميع ====================
+local remoteEvent = Instance.new("RemoteEvent")
+remoteEvent.Name = "MoenKingBubbleEvent"
+remoteEvent.Parent = ReplicatedStorage
+
+local function ShowGlobalBubble(commandText, playerName)
+    remoteEvent:FireAllClients(commandText, playerName or plr.Name)
+end
+
+remoteEvent.OnClientEvent:Connect(function(commandText, senderName)
+    local sender = Players:FindFirstChild(senderName)
+    if not sender or not sender.Character then return end
+    
+    local character = sender.Character
+    local head = character:FindFirstChild("Head")
+    if not head then return end
+    
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "CommandBubble_" .. os.time() .. math.random(1, 9999)
+    billboard.Adornee = head
+    billboard.Size = UDim2.new(0, 300, 0, 55)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+    billboard.AlwaysOnTop = true
+    billboard.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    local mainFrame = Instance.new("Frame", billboard)
+    mainFrame.Size = UDim2.new(1, 0, 1, 0)
+    mainFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+    mainFrame.BackgroundTransparency = 0.1
+    Instance.new("UICorner", mainFrame).CornerRadius = UDim.new(0, 15)
+    
+    local stroke = Instance.new("UIStroke", mainFrame)
+    stroke.Color = Color3.fromRGB(255, 100, 0)
+    stroke.Thickness = 3
+    
+    local sideBar = Instance.new("Frame", mainFrame)
+    sideBar.Size = UDim2.new(0, 8, 1, 0)
+    sideBar.Position = UDim2.new(0, 0, 0, 0)
+    sideBar.BackgroundColor3 = Color3.fromRGB(255, 100, 0)
+    sideBar.BackgroundTransparency = 0.2
+    
+    local icon = Instance.new("TextLabel", mainFrame)
+    icon.Size = UDim2.new(0, 40, 1, 0)
+    icon.Position = UDim2.new(0, 10, 0, 0)
+    icon.BackgroundTransparency = 1
+    icon.Text = "⚡"
+    icon.TextColor3 = Color3.fromRGB(255, 100, 0)
+    icon.TextSize = 28
+    icon.Font = Enum.Font.GothamBold
+    
+    local text = Instance.new("TextLabel", mainFrame)
+    text.Size = UDim2.new(1, -60, 1, 0)
+    text.Position = UDim2.new(0, 55, 0, 0)
+    text.BackgroundTransparency = 1
+    text.Text = commandText
+    text.TextColor3 = Color3.fromRGB(255, 255, 255)
+    text.TextSize = 18
+    text.Font = Enum.Font.GothamBold
+    text.TextXAlignment = Enum.TextXAlignment.Left
+    text.TextTruncate = Enum.TextTruncate.AtEnd
+    
+    local existingBubbles = {}
+    for _, child in ipairs(head:GetChildren()) do
+        if child:IsA("BillboardGui") and child.Name ~= billboard.Name then
+            table.insert(existingBubbles, child)
+        end
+    end
+    
+    local offsetY = 3 + (#existingBubbles * 1.2)
+    billboard.StudsOffset = Vector3.new(0, offsetY, 0)
+    
+    for i, bubble in ipairs(existingBubbles) do
+        local newOffset = 3 + ((i - 1) * 1.2)
+        TweenService:Create(bubble, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+            StudsOffset = Vector3.new(0, newOffset, 0)
+        }):Play()
+    end
+    
+    billboard.Parent = head
+    billboard.Enabled = true
+    
+    TweenService:Create(billboard, TweenInfo.new(0.3, Enum.EasingStyle.Bounce), {
+        StudsOffset = Vector3.new(0, offsetY, 0)
+    }):Play()
+    
+    task.spawn(function()
+        task.wait(7)
+        if billboard and billboard.Parent then
+            billboard:Destroy()
+        end
+    end)
+end)
+
+-- ==================== نظام الإشعارات ====================
+local activeNotifications = {}
+local notificationQueue = {}
+local isProcessingQueue = false
+local notificationSpacing = 55
+local ScreenGui = nil
+
+local function UpdateNotificationPositions()
+    for i, notifData in ipairs(activeNotifications) do
+        if notifData.button and notifData.button.Parent then
+            local newY = 0.08 + ((i - 1) * (notificationSpacing / getScreenHeight()))
+            TweenService:Create(notifData.button, TweenInfo.new(0.2, Enum.EasingStyle.Quad), {
+                Position = UDim2.new(0.5, -140, newY, 0)
+            }):Play()
+        end
+    end
+end
+
+local function RemoveNotification(notifButton)
+    for i, notifData in ipairs(activeNotifications) do
+        if notifData.button == notifButton then
+            table.remove(activeNotifications, i)
+            UpdateNotificationPositions()
+            break
+        end
+    end
+end
+
+local function ShowPlayerNotification(playerName, isJoining)
+    if not ScreenGui then return end
+    table.insert(notificationQueue, {playerName = playerName, isJoining = isJoining})
+    
+    if not isProcessingQueue then
+        task.spawn(function()
+            isProcessingQueue = true
+            
+            while #notificationQueue > 0 do
+                while #activeNotifications >= 3 do task.wait(0.5) end
+                
+                local notifData = table.remove(notificationQueue, 1)
+                
+                local notif = Instance.new("TextButton", ScreenGui)
+                notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.05, 45))
+                notif.BackgroundTransparency = 0.15
+                notif.Text = ""
+                notif.AutoButtonColor = false
+                Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 12)
+                
+                if notifData.isJoining then
+                    notif.BackgroundColor3 = Color3.fromRGB(0, 100, 0)
+                    notif.Text = "✅ " .. notifData.playerName .. " دخل السيرفر!"
+                else
+                    notif.BackgroundColor3 = Color3.fromRGB(100, 0, 0)
+                    notif.Text = "❌ " .. notifData.playerName .. " خرج من السيرفر!"
+                end
+                
+                notif.TextColor3 = Color3.fromRGB(255, 255, 255)
+                notif.TextSize = math.max(math.min(getScreenWidth() * 0.012, 13), 9)
+                notif.Font = Enum.Font.GothamBold
+                
+                notif.MouseButton1Click:Connect(function()
+                    pcall(function()
+                        setclipboard(notifData.playerName)
+                        local copyNotif = Instance.new("TextLabel", ScreenGui)
+                        copyNotif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+                        copyNotif.Position = UDim2.new(0.5, -125, 0.5, -150)
+                        copyNotif.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+                        copyNotif.BackgroundTransparency = 0.1
+                        copyNotif.Text = "✅ تم نسخ الاسم: " .. notifData.playerName
+                        copyNotif.TextColor3 = Color3.fromRGB(0, 255, 100)
+                        copyNotif.TextSize = math.max(math.min(getScreenWidth() * 0.012, 13), 9)
+                        copyNotif.Font = Enum.Font.GothamBold
+                        Instance.new("UICorner", copyNotif).CornerRadius = UDim.new(0, 10)
+                        
+                        task.wait(2)
+                        TweenService:Create(copyNotif, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+                            Position = UDim2.new(0.5, -125, 0.5, -200)
+                        }):Play()
+                        task.wait(0.3)
+                        copyNotif:Destroy()
+                    end)
+                end)
+                
+                local newIndex = #activeNotifications + 1
+                local startY = 0.08 + ((newIndex - 1) * (notificationSpacing / getScreenHeight()))
+                
+                notif.Position = UDim2.new(0.5, -140, -0.1, 0)
+                notif.BackgroundTransparency = 0.15
+                
+                table.insert(activeNotifications, {button = notif, playerName = notifData.playerName})
+                
+                TweenService:Create(notif, TweenInfo.new(0.4, Enum.EasingStyle.Bounce), {
+                    Position = UDim2.new(0.5, -140, startY, 0)
+                }):Play()
+                
+                UpdateNotificationPositions()
+                
+                task.spawn(function()
+                    task.wait(4)
+                    if notif and notif.Parent then
+                        TweenService:Create(notif, TweenInfo.new(0.3, Enum.EasingStyle.Quad), {
+                            Position = UDim2.new(0.5, -140, -0.1, 0)
+                        }):Play()
+                        task.wait(0.3)
+                        notif:Destroy()
+                        RemoveNotification(notif)
+                    end
+                end)
+                
+                task.wait(0.8)
+            end
+            
+            isProcessingQueue = false
+        end)
+    end
+end
+
+-- ==================== تأثيرات قوس قزح ====================
+local function CreateRainbowFrame(frame, thickness, speed)
+    local stroke = Instance.new("UIStroke", frame)
+    stroke.Thickness = thickness or 3
+    stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    
+    local hue = 0
+    task.spawn(function()
+        while frame and frame.Parent do
+            hue = (hue + (speed or 0.003)) % 1
+            stroke.Color = Color3.fromHSV(hue, 1, 1)
+            task.wait(0.05)
+        end
+    end)
+    return stroke
+end
+
+local function CreateRainbowBackground(frame, speed)
+    task.spawn(function()
+        local hue = 0
+        while frame and frame.Parent do
+            hue = (hue + (speed or 0.002)) % 1
+            frame.BackgroundColor3 = Color3.fromHSV(hue, 0.8, 0.2)
+            task.wait(0.05)
+        end
+    end)
+end
+
+local function MakeButtonRainbow(button, speed)
+    task.spawn(function()
+        local hue = 0
+        while button and button.Parent do
+            hue = (hue + (speed or 0.003)) % 1
+            button.BackgroundColor3 = Color3.fromHSV(hue, 0.9, 0.55)
+            task.wait(0.05)
+        end
+    end)
+end
+
+-- ==================== الألوان ====================
+local Colors = {
+    Glass = Color3.fromRGB(20, 20, 30),
+    GlassDark = Color3.fromRGB(15, 15, 22),
+    NeonPink = Color3.fromRGB(255, 50, 120),
+    NeonCyan = Color3.fromRGB(0, 255, 200),
+    NeonPurple = Color3.fromRGB(150, 50, 255),
+    NeonOrange = Color3.fromRGB(255, 100, 50),
+    NeonGreen = Color3.fromRGB(0, 255, 100),
+    White = Color3.fromRGB(255, 255, 255),
+    Gray = Color3.fromRGB(180, 180, 200),
+    Dark = Color3.fromRGB(10, 10, 18),
+    Gold = Color3.fromRGB(255, 215, 0),
+    Discord = Color3.fromRGB(88, 101, 242),
+}
+
+-- ==================== بلاك ليست ====================
+local BLACKLIST = {  
+    "Waleedking70", "JJFH23456771", "omarbkp", 
+    "fastma_storage", "No_Louay", "mlk123456771", "fling_2009", "", "CmdBarDestroyer"
+}  
+
+local function IsPlayerBlacklisted(playerName)  
+    local nameLower = playerName:lower()  
+    for _, blacklistedName in ipairs(BLACKLIST) do  
+        if nameLower == blacklistedName:lower() then return true end  
+    end  
+    return false 
+end  
+
+if IsPlayerBlacklisted(plr.Name) then  
+    local warningGui = Instance.new("ScreenGui", plr.PlayerGui) 
+    local warningFrame = Instance.new("Frame", warningGui)  
+    warningFrame.Size = UDim2.new(0, 400, 0, 200)  
+    warningFrame.Position = UDim2.new(0.5, -200, 0.5, -100)  
+    warningFrame.BackgroundColor3 = Color3.fromRGB(20, 0, 0)  
+    Instance.new("UICorner", warningFrame).CornerRadius = UDim.new(0, 15)
+    local title = Instance.new("TextLabel", warningFrame)  
+    title.Size = UDim2.new(1, 0, 0, 50)  
+    title.Text = "⚠️ BLACKLIST DETECTED ⚠️"  
+    title.TextColor3 = Color3.new(1, 1, 1)  
+    title.Font = Enum.Font.GothamBlack 
+    title.TextScaled = true  
+    task.wait(3)  
+    plr:Kick("🚫 دز")
+    return 
+end
+
+-- ==================== حماية من أمر re ====================
+local function ProtectFromRe()
+    pcall(function()
+        local remote = ReplicatedStorage:FindFirstChild("HDAdminHDClient")
+        if remote then
+            local signals = remote:FindFirstChild("Signals")
+            if signals then
+                local request = signals:FindFirstChild("RequestCommandSilent")
+                if request then
+                    local originalFunction = request.InvokeServer
+                    request.InvokeServer = function(self, command)
+                        if command and type(command) == "string" then
+                            local lowerCmd = command:lower()
+                            if lowerCmd == "re me" or lowerCmd:find("re fahad_moen3") then
+                                local notif = Instance.new("TextLabel", ScreenGui)
+                                notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.28, 320), 0, math.min(getScreenHeight() * 0.05, 45))
+                                notif.Position = UDim2.new(0.5, -160, 0.8, 0)
+                                notif.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+                                notif.Text = "🛡️ تم منع أمر re على fahad_moen3 👑"
+                                notif.TextColor3 = Colors.White
+                                notif.TextSize = math.max(math.min(getScreenWidth() * 0.012, 13), 9)
+                                notif.Font = Enum.Font.GothamBold
+                                Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+                                game:GetService("Debris"):AddItem(notif, 3)
+                                return
+                            end
+                        end
+                        return originalFunction(self, command)
+                    end
+                end
+            end
+        end
+    end)
+end
+
+task.spawn(function()
+    task.wait(2)
+    ProtectFromRe()
+end)
+
+-- ==================== دوال عامة ====================
+local function MakeDraggable(frame, dragBar)
+    local dragging = false
+    local dragStart, startPos
+    
+    dragBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = frame.Position
+        end
+    end)
+    
+    dragBar.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+end
+
+local function MakeButtonDraggable(button)
+    local dragging = false
+    local dragStart, startPos
+    local buttonSize = button.AbsoluteSize
+    
+    button.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            dragStart = input.Position
+            startPos = button.Position
+            buttonSize = button.AbsoluteSize
+        end
+    end)
+    
+    button.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+            local delta = input.Position - dragStart
+            local newX = startPos.X.Offset + delta.X
+            local newY = startPos.Y.Offset + delta.Y
+            
+            local screenSize = getScreenWidth()
+            local minX = 5
+            local maxX = screenSize - buttonSize.X - 5
+            local minY = 5
+            local maxY = getScreenHeight() - buttonSize.Y - 5
+            
+            newX = math.clamp(newX, minX, maxX)
+            newY = math.clamp(newY, minY, maxY)
+            
+            button.Position = UDim2.new(0, newX, 0, newY)
+        end
+    end)
+end
+
+-- ==================== قائمة السكربتات الجاهزة ====================
+local scriptsList = {
+    {Name = "🎮 سكربت BedWars Vape V4", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/7GrandDadPGN/VapeV4ForRoblox/main/NewMainScript.lua', true))()"},
+    {Name = "⚔️ سكربت Kill Aura + Aimbot", Script = "loadstring(game:HttpGet('https://gist.githubusercontent.com/DeveloperMikey/2b8ee3d5a38c56c2cc1db72554850384/raw/bedwar.lua', true))()"},
+    {Name = "🕊️ سكربت طيران + قفز", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/GamerScripter/Game-Hub/main/loader'))()"},
+    {Name = "🐒 سكربت Monkey Scripts", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/KuriWasTaken/MonkeyScripts/main/BedWarsMonkey.lua'))()"},
+    {Name = "🌙 سكربت Aether Client", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/CakScripts/AetherClientBW/main/MainScript'))()"},
+    {Name = "💀 سكربت سبام شامل", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/UltraStuff/scripts2/main/bedwars', true))()"},
+    {Name = "👑 سكربت Fling GUI", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/K1LAS1K/Ultimate-Fling-GUI/main/flingscript.lua'))()"},
+    {Name = "🔥 سكربت BedWars Luigi", Script = "loadstring(game:HttpGet('https://raw.githubusercontent.com/Luigi4k85/Bedwore/refs/heads/main/Bedwore%20by%20Luigi'))()"},
+}
+
+-- نافذة اختيار السكربتات
+local ScriptsWindow = nil
+local function ShowScriptsWindow()
+    if ScriptsWindow and ScriptsWindow.Parent then
+        ScriptsWindow:Destroy()
+        ScriptsWindow = nil
+        return
+    end
+    
+    ScriptsWindow = Instance.new("ScreenGui", CoreGui)
+    ScriptsWindow.Name = "ScriptsSelector_Moen"
+    ScriptsWindow.ResetOnSpawn = false
+    
+    local windowWidth = math.min(getScreenWidth() * 0.85, 380)
+    local windowHeight = math.min(getScreenHeight() * 0.7, 500)
+    
+    local MainWindow = Instance.new("Frame", ScriptsWindow)
+    MainWindow.Size = UDim2.new(0, windowWidth, 0, windowHeight)
+    MainWindow.Position = UDim2.new(0.5, -windowWidth/2, 0.5, -windowHeight/2)
+    MainWindow.BackgroundColor3 = Colors.Glass
+    MainWindow.BackgroundTransparency = 0.1
+    Instance.new("UICorner", MainWindow).CornerRadius = UDim.new(0, 20)
+    CreateRainbowFrame(MainWindow, 3, 0.003)
+    
+    local WindowHeader = Instance.new("Frame", MainWindow)
+    WindowHeader.Size = UDim2.new(1, 0, 0, 50)
+    WindowHeader.BackgroundColor3 = Colors.Dark
+    WindowHeader.BackgroundTransparency = 0.5
+    Instance.new("UICorner", WindowHeader).CornerRadius = UDim.new(0, 20)
+    
+    MakeDraggable(MainWindow, WindowHeader)
+    
+    local WindowTitle = Instance.new("TextLabel", WindowHeader)
+    WindowTitle.Size = UDim2.new(1, -50, 1, 0)
+    WindowTitle.Position = UDim2.new(0, 15, 0, 0)
+    WindowTitle.BackgroundTransparency = 1
+    WindowTitle.Text = "📦 قائمة السكربتات الجاهزة"
+    WindowTitle.TextColor3 = Colors.Gold
+    WindowTitle.TextSize = math.max(12, math.min(16, getScreenWidth() * 0.015))
+    WindowTitle.Font = Enum.Font.GothamBold
+    WindowTitle.TextXAlignment = Enum.TextXAlignment.Left
+    
+    local WindowClose = Instance.new("TextButton", WindowHeader)
+    WindowClose.Size = UDim2.new(0, 35, 0, 35)
+    WindowClose.Position = UDim2.new(1, -45, 0.5, -17.5)
+    WindowClose.BackgroundColor3 = Colors.NeonPink
+    WindowClose.Text = "X"
+    WindowClose.TextColor3 = Colors.White
+    WindowClose.TextSize = 18
+    Instance.new("UICorner", WindowClose).CornerRadius = UDim.new(0, 5)
+    WindowClose.MouseButton1Click:Connect(function()
+        if ScriptsWindow then ScriptsWindow:Destroy() end
+        ScriptsWindow = nil
+    end)
+    
+    local ScrollArea = Instance.new("ScrollingFrame", MainWindow)
+    ScrollArea.Size = UDim2.new(1, -20, 1, -70)
+    ScrollArea.Position = UDim2.new(0, 10, 0, 60)
+    ScrollArea.BackgroundTransparency = 1
+    ScrollArea.CanvasSize = UDim2.new(0, 0, 0, 0)
+    ScrollArea.ScrollBarThickness = 3
+    
+    local ScrollLayout = Instance.new("UIListLayout", ScrollArea)
+    ScrollLayout.Padding = UDim.new(0, 10)
+    ScrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    
+    for _, script in ipairs(scriptsList) do
+        local btn = Instance.new("TextButton", ScrollArea)
+        btn.Size = UDim2.new(1, 0, 0, 50)
+        btn.BackgroundColor3 = Colors.Dark
+        btn.BackgroundTransparency = 0.3
+        btn.Text = script.Name
+        btn.TextColor3 = Colors.White
+        btn.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+        btn.Font = Enum.Font.GothamBold
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 12)
+        MakeButtonRainbow(btn, 0.003)
+        
+        btn.MouseButton1Click:Connect(function()
+            pcall(function()
+                loadstring(script.Script)()
+                local notif = Instance.new("TextLabel", ScreenGui)
+                notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.3, 300), 0, math.min(getScreenHeight() * 0.04, 35))
+                notif.Position = UDim2.new(0.5, -150, 0.8, 0)
+                notif.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+                notif.Text = "✅ تم تشغيل: " .. script.Name
+                notif.TextColor3 = Colors.NeonGreen
+                notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+                notif.Font = Enum.Font.GothamBold
+                Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+                game:GetService("Debris"):AddItem(notif, 3)
+            end)
+        end)
+    end
+    
+    ScrollLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        ScrollArea.CanvasSize = UDim2.new(0, 0, 0, ScrollLayout.AbsoluteContentSize.Y + 10)
+    end)
+end
+
+-- ==================== نافذة الديسكورد ====================
+local DiscordFrame = nil
+local function ShowDiscordWindow()
+    if DiscordFrame and DiscordFrame.Parent then
+        DiscordFrame:Destroy()
+        DiscordFrame = nil
+        return
+    end
+    
+    DiscordFrame = Instance.new("Frame", ScreenGui)
+    DiscordFrame.Size = UDim2.new(0, math.min(getScreenWidth() * 0.85, 340), 0, math.min(getScreenHeight() * 0.22, 160))
+    DiscordFrame.Position = UDim2.new(1, -math.min(getScreenWidth() * 0.85, 340), 0.5, -math.min(getScreenHeight() * 0.11, 80))
+    DiscordFrame.BackgroundColor3 = Colors.Glass
+    DiscordFrame.BackgroundTransparency = 0.1
+    Instance.new("UICorner", DiscordFrame).CornerRadius = UDim.new(0, 18)
+    CreateRainbowFrame(DiscordFrame, 2, 0.003)
+    
+    local DiscordHeader = Instance.new("Frame", DiscordFrame)
+    DiscordHeader.Size = UDim2.new(1, 0, 0, 40)
+    DiscordHeader.BackgroundColor3 = Colors.Dark
+    DiscordHeader.BackgroundTransparency = 0.5
+    Instance.new("UICorner", DiscordHeader).CornerRadius = UDim.new(0, 18)
+    
+    MakeDraggable(DiscordFrame, DiscordHeader)
+    
+    local DiscordTitle = Instance.new("TextLabel", DiscordHeader)
+    DiscordTitle.Size = UDim2.new(1, -80, 1, 0)
+    DiscordTitle.Position = UDim2.new(0, 12, 0, 0)
+    DiscordTitle.BackgroundTransparency = 1
+    DiscordTitle.Text = "💬 Discord Setup"
+    DiscordTitle.TextColor3 = Colors.Discord
+    DiscordTitle.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.014))
+    
+    local DiscordClose = Instance.new("TextButton", DiscordHeader)
+    DiscordClose.Size = UDim2.new(0, 32, 0, 32)
+    DiscordClose.Position = UDim2.new(1, -40, 0.5, -16)
+    DiscordClose.BackgroundColor3 = Colors.NeonPink
+    DiscordClose.Text = "X"
+    DiscordClose.TextSize = 18
+    Instance.new("UICorner", DiscordClose).CornerRadius = UDim.new(0, 5)
+    DiscordClose.MouseButton1Click:Connect(function()
+        DiscordFrame:Destroy()
+        DiscordFrame = nil
+        DiscordSideBtn.Visible = true
+    end)
+    
+    local DiscordInput = Instance.new("TextBox", DiscordFrame)
+    DiscordInput.Size = UDim2.new(0.6, -10, 0, 40)
+    DiscordInput.Position = UDim2.new(0, 12, 0.35, 0)
+    DiscordInput.BackgroundColor3 = Colors.Dark
+    DiscordInput.Text = discordName
+    DiscordInput.PlaceholderText = "اسمك في ديسكورد..."
+    DiscordInput.TextColor3 = Colors.White
+    DiscordInput.TextSize = math.max(12, math.min(15, getScreenWidth() * 0.014))
+    Instance.new("UICorner", DiscordInput).CornerRadius = UDim.new(0, 10)
+    
+    local DiscordSaveBtn = Instance.new("TextButton", DiscordFrame)
+    DiscordSaveBtn.Size = UDim2.new(0.35, -10, 0, 40)
+    DiscordSaveBtn.Position = UDim2.new(0.65, 0, 0.35, 0)
+    DiscordSaveBtn.Text = "حفظ"
+    DiscordSaveBtn.TextColor3 = Colors.Dark
+    DiscordSaveBtn.TextSize = math.max(12, math.min(15, getScreenWidth() * 0.014))
+    Instance.new("UICorner", DiscordSaveBtn).CornerRadius = UDim.new(0, 10)
+    MakeButtonRainbow(DiscordSaveBtn, 0.003)
+    
+    DiscordSaveBtn.MouseButton1Click:Connect(function()
+        local newName = DiscordInput.Text
+        if newName ~= "" then
+            SaveDiscordName(newName)
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+            notif.BackgroundColor3 = Colors.Dark
+            notif.Text = "✅ تم حفظ اسمك: " .. newName
+            notif.TextColor3 = Colors.NeonGreen
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 2)
+            DiscordFrame:Destroy()
+            DiscordFrame = nil
+            DiscordSideBtn.Visible = true
+        end
+    end)
+    
+    local DiscordWebhookBtn = Instance.new("TextButton", DiscordFrame)
+    DiscordWebhookBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    DiscordWebhookBtn.Position = UDim2.new(0.05, 0, 0.7, 0)
+    DiscordWebhookBtn.Text = "🔗 انضم للسيرفر"
+    DiscordWebhookBtn.TextColor3 = Colors.White
+    DiscordWebhookBtn.BackgroundColor3 = Colors.Discord
+    DiscordWebhookBtn.TextSize = math.max(10, math.min(13, getScreenWidth() * 0.012))
+    Instance.new("UICorner", DiscordWebhookBtn).CornerRadius = UDim.new(0, 10)
+    
+    DiscordWebhookBtn.MouseButton1Click:Connect(function()
+        pcall(function()
+            setclipboard(DISCORD_WEBHOOK_URL)
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.3, 300), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -150, 0.8, 0)
+            notif.BackgroundColor3 = Colors.Dark
+            notif.Text = "✅ تم نسخ رابط الديسكورد!"
+            notif.TextColor3 = Colors.NeonGreen
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 2)
+        end)
+    end)
+end
+
+-- ==================== إنشاء واجهة السكربت ====================
+local GUI_NAME = "Moen_King_UI"
+
+if CoreGui:FindFirstChild(GUI_NAME) then 
+    CoreGui[GUI_NAME]:Destroy() 
+end
+
+ScreenGui = Instance.new("ScreenGui", CoreGui)
+ScreenGui.Name = GUI_NAME
+ScreenGui.ResetOnSpawn = false
+ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+-- ==================== شاشة التحميل الجميلة ====================
+local LoadingFrame = Instance.new("Frame", ScreenGui)
+LoadingFrame.Size = UDim2.new(1, 0, 1, 0)
+LoadingFrame.BackgroundColor3 = Color3.fromRGB(0, 0, 0)
+LoadingFrame.BackgroundTransparency = 0.7
+LoadingFrame.ZIndex = 999
+
+local Blur = Instance.new("BlurEffect", Lighting)
+Blur.Enabled = true
+Blur.Size = 8
+
+local GradientBg = Instance.new("Frame", LoadingFrame)
+GradientBg.Size = UDim2.new(1, 0, 1, 0)
+GradientBg.BackgroundColor3 = Color3.fromRGB(20, 20, 40)
+GradientBg.BackgroundTransparency = 0.3
+
+-- كرات متوهجة
+local GlowBall1 = Instance.new("Frame", LoadingFrame)
+GlowBall1.Size = UDim2.new(0, 200, 0, 200)
+GlowBall1.Position = UDim2.new(0.2, 0, 0.1, 0)
+GlowBall1.BackgroundColor3 = Color3.fromRGB(255, 50, 120)
+GlowBall1.BackgroundTransparency = 0.85
+Instance.new("UICorner", GlowBall1).CornerRadius = UDim.new(1, 0)
+
+task.spawn(function()
+    local t = 0
+    while GlowBall1 and GlowBall1.Parent do
+        t = t + 0.01
+        GlowBall1.Position = UDim2.new(0.2 + math.sin(t) * 0.05, 0, 0.1 + math.cos(t * 0.7) * 0.03, 0)
+        task.wait(0.05)
+    end
+end)
+
+local GlowBall2 = Instance.new("Frame", LoadingFrame)
+GlowBall2.Size = UDim2.new(0, 150, 0, 150)
+GlowBall2.Position = UDim2.new(0.7, 0, 0.6, 0)
+GlowBall2.BackgroundColor3 = Color3.fromRGB(0, 200, 255)
+GlowBall2.BackgroundTransparency = 0.85
+Instance.new("UICorner", GlowBall2).CornerRadius = UDim.new(1, 0)
+
+task.spawn(function()
+    local t = 0
+    while GlowBall2 and GlowBall2.Parent do
+        t = t + 0.01
+        GlowBall2.Position = UDim2.new(0.7 + math.cos(t) * 0.05, 0, 0.6 + math.sin(t * 0.5) * 0.03, 0)
+        task.wait(0.05)
+    end
+end)
+
+local GlowBall3 = Instance.new("Frame", LoadingFrame)
+GlowBall3.Size = UDim2.new(0, 120, 0, 120)
+GlowBall3.Position = UDim2.new(0.5, 0, 0.3, 0)
+GlowBall3.BackgroundColor3 = Color3.fromRGB(150, 50, 255)
+GlowBall3.BackgroundTransparency = 0.85
+Instance.new("UICorner", GlowBall3).CornerRadius = UDim.new(1, 0)
+
+task.spawn(function()
+    local t = 0
+    while GlowBall3 and GlowBall3.Parent do
+        t = t + 0.01
+        GlowBall3.Position = UDim2.new(0.5 + math.sin(t * 0.8) * 0.04, 0, 0.3 + math.cos(t * 0.6) * 0.02, 0)
+        task.wait(0.05)
+    end
+end)
+
+local loadingWidth = isMobile and 300 or 380
+local loadingHeight = isMobile and 400 or 450
+local LoadingBg = Instance.new("Frame", LoadingFrame)
+LoadingBg.Size = UDim2.new(0, loadingWidth, 0, loadingHeight)
+LoadingBg.Position = UDim2.new(0.5, -loadingWidth/2, 0.5, -loadingHeight/2)
+LoadingBg.BackgroundColor3 = Color3.fromRGB(20, 20, 35)
+LoadingBg.BackgroundTransparency = 0.1
+Instance.new("UICorner", LoadingBg).CornerRadius = UDim.new(0, 30)
+
+local LoadingStroke = Instance.new("UIStroke", LoadingBg)
+LoadingStroke.Thickness = 2
+local hue = 0
+task.spawn(function()
+    while LoadingBg and LoadingBg.Parent do
+        hue = (hue + 0.003) % 1
+        LoadingStroke.Color = Color3.fromHSV(hue, 1, 1)
+        task.wait(0.05)
+    end
+end)
+
+local CrownContainer = Instance.new("Frame", LoadingBg)
+CrownContainer.Size = UDim2.new(0, 100, 0, 100)
+CrownContainer.Position = UDim2.new(0.5, -50, 0.18, 0)
+CrownContainer.BackgroundTransparency = 1
+
+local CrownIcon = Instance.new("TextLabel", CrownContainer)
+CrownIcon.Size = UDim2.new(1, 0, 1, 0)
+CrownIcon.BackgroundTransparency = 1
+CrownIcon.Text = "👑"
+CrownIcon.TextColor3 = Colors.Gold
+CrownIcon.TextSize = 70
+CrownIcon.Font = Enum.Font.GothamBold
+
+task.spawn(function()
+    while CrownIcon and CrownIcon.Parent do
+        for i = 1, 20 do
+            CrownIcon.TextSize = 65 + math.sin(i * 0.5) * 5
+            task.wait(0.05)
+        end
+        task.wait(0.2)
+    end
+end)
+
+local LoadingTitle = Instance.new("TextLabel", LoadingBg)
+LoadingTitle.Size = UDim2.new(1, -40, 0, 45)
+LoadingTitle.Position = UDim2.new(0, 20, 0.38, 0)
+LoadingTitle.BackgroundTransparency = 1
+LoadingTitle.Text = "MOEN KING"
+LoadingTitle.TextColor3 = Colors.Gold
+LoadingTitle.TextSize = isMobile and 22 or 28
+LoadingTitle.Font = Enum.Font.GothamBold
+
+local LoadingText = Instance.new("TextLabel", LoadingBg)
+LoadingText.Size = UDim2.new(1, -40, 0, 30)
+LoadingText.Position = UDim2.new(0, 20, 0.52, 0)
+LoadingText.BackgroundTransparency = 1
+LoadingText.Text = "جاري تحميل السكربت..."
+LoadingText.TextColor3 = Colors.NeonCyan
+LoadingText.TextSize = isMobile and 14 or 16
+LoadingText.Font = Enum.Font.Gotham
+
+local LoadingBar = Instance.new("Frame", LoadingBg)
+LoadingBar.Size = UDim2.new(0.8, 0, 0, isMobile and 8 or 10)
+LoadingBar.Position = UDim2.new(0.1, 0, 0.65, 0)
+LoadingBar.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
+Instance.new("UICorner", LoadingBar).CornerRadius = UDim.new(1, 0)
+
+local LoadingProgress = Instance.new("Frame", LoadingBar)
+LoadingProgress.Size = UDim2.new(0, 0, 1, 0)
+LoadingProgress.BackgroundColor3 = Colors.NeonPurple
+Instance.new("UICorner", LoadingProgress).CornerRadius = UDim.new(1, 0)
+
+local LoadingPercent = Instance.new("TextLabel", LoadingBg)
+LoadingPercent.Size = UDim2.new(1, -40, 0, 30)
+LoadingPercent.Position = UDim2.new(0, 20, 0.78, 0)
+LoadingPercent.BackgroundTransparency = 1
+LoadingPercent.Text = "0%"
+LoadingPercent.TextColor3 = Colors.NeonCyan
+LoadingPercent.TextSize = isMobile and 18 or 22
+LoadingPercent.Font = Enum.Font.GothamBold
+
+local DevText = Instance.new("TextLabel", LoadingBg)
+DevText.Size = UDim2.new(1, -40, 0, 25)
+DevText.Position = UDim2.new(0, 20, 0.88, 0)
+DevText.BackgroundTransparency = 1
+DevText.Text = "Developer: fahad_moen3"
+DevText.TextColor3 = Colors.Gray
+DevText.TextSize = isMobile and 10 or 11
+DevText.Font = Enum.Font.Gotham
+
+local VersionText = Instance.new("TextLabel", LoadingBg)
+VersionText.Size = UDim2.new(1, -40, 0, 20)
+VersionText.Position = UDim2.new(0, 20, 0.94, 0)
+VersionText.BackgroundTransparency = 1
+VersionText.Text = "Version " .. CURRENT_VERSION
+VersionText.TextColor3 = Colors.Gray
+VersionText.TextSize = isMobile and 9 or 10
+VersionText.Font = Enum.Font.Gotham
+
+local function CreateDot(x, y, color)
+    local dot = Instance.new("Frame", LoadingBg)
+    dot.Size = UDim2.new(0, 8, 0, 8)
+    dot.Position = UDim2.new(x, 0, y, 0)
+    dot.BackgroundColor3 = color
+    Instance.new("UICorner", dot).CornerRadius = UDim.new(1, 0)
+    return dot
+end
+
+local dots = {}
+for i = 1, 3 do
+    local dot = CreateDot(0.48 + (i-1)*0.02, 0.6, Colors.NeonPink)
+    dot.BackgroundTransparency = 0.5
+    table.insert(dots, dot)
+end
+
+task.spawn(function()
+    while #dots > 0 and dots[1] and dots[1].Parent do
+        for i, dot in ipairs(dots) do
+            local opacity = 0.3 + math.sin(tick() * 5 + i) * 0.3
+            dot.BackgroundTransparency = 1 - opacity
+            dot.BackgroundColor3 = Color3.fromHSV((tick() * 0.5 + i) % 1, 1, 1)
+        end
+        task.wait(0.1)
+    end
+end)
+
+local Ripple = Instance.new("Frame", LoadingBg)
+Ripple.Size = UDim2.new(0, 0, 0, 0)
+Ripple.Position = UDim2.new(0.5, 0, 0.5, 0)
+Ripple.AnchorPoint = Vector2.new(0.5, 0.5)
+Ripple.BackgroundColor3 = Colors.NeonCyan
+Ripple.BackgroundTransparency = 0.8
+Instance.new("UICorner", Ripple).CornerRadius = UDim.new(1, 0)
+Ripple.Visible = false
+
+local progress = 0
+local steps = {
+    {text = "جاري تهيئة السكربت...", percent = 20},
+    {text = "تحميل الإعدادات...", percent = 40},
+    {text = "تهيئة الواجهة...", percent = 60},
+    {text = "تحميل الأزرار...", percent = 80},
+    {text = "اكتمال التحميل!", percent = 100},
+}
+
+local stepIndex = 1
+task.spawn(function()
+    while progress < 100 do
+        progress = progress + 1
+        LoadingProgress.Size = UDim2.new(progress/100, 0, 1, 0)
+        LoadingPercent.Text = math.floor(progress) .. "%"
+        
+        local hue = (progress / 100) * 0.7
+        LoadingProgress.BackgroundColor3 = Color3.fromHSV(hue, 1, 0.8)
+        
+        if stepIndex <= #steps and progress >= steps[stepIndex].percent then
+            LoadingText.Text = steps[stepIndex].text
+            stepIndex = stepIndex + 1
+        end
+        
+        if progress == 50 or progress == 100 then
+            Ripple.Visible = true
+            Ripple.Size = UDim2.new(0, 10, 0, 10)
+            for i = 1, 20 do
+                local size = 10 + i * 15
+                Ripple.Size = UDim2.new(0, size, 0, size)
+                Ripple.BackgroundTransparency = 0.9 - (i / 20) * 0.5
+                task.wait(0.02)
+            end
+            Ripple.Visible = false
+        end
+        
+        task.wait(0.015)
+    end
+end)
+
+task.wait(2.5)
+TweenService:Create(LoadingFrame, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+    BackgroundTransparency = 1
+}):Play()
+task.wait(0.5)
+LoadingFrame:Destroy()
+if Blur then Blur:Destroy() end
+
+-- ==================== الأزرار الجانبية ====================
+local btnSize = math.min(getScreenWidth() * 0.09, 60)
+local SideBtn = Instance.new("TextButton", ScreenGui)
+SideBtn.Size = UDim2.new(0, btnSize, 0, btnSize)
+SideBtn.Position = UDim2.new(0, math.max(10, btnSize * 0.3), 0.5, -btnSize/2)
+SideBtn.Text = "👑"
+SideBtn.TextColor3 = Colors.White
+SideBtn.TextSize = math.max(20, math.min(30, getScreenWidth() * 0.03))
+SideBtn.Font = Enum.Font.GothamBold
+SideBtn.Visible = true
+Instance.new("UICorner", SideBtn).CornerRadius = UDim.new(1, 0)
+MakeButtonRainbow(SideBtn, 0.003)
+local SideBtnStroke = Instance.new("UIStroke", SideBtn)
+SideBtnStroke.Color = Colors.NeonCyan
+SideBtnStroke.Thickness = 2
+
+MakeButtonDraggable(SideBtn)
+
+local DiscordSideBtn = Instance.new("TextButton", ScreenGui)
+DiscordSideBtn.Size = UDim2.new(0, btnSize, 0, btnSize)
+DiscordSideBtn.Position = UDim2.new(0, getScreenWidth() - btnSize - math.max(10, btnSize * 0.3), 0.5, -btnSize/2)
+DiscordSideBtn.BackgroundColor3 = Colors.Discord
+DiscordSideBtn.Text = "💬"
+DiscordSideBtn.TextColor3 = Colors.White
+DiscordSideBtn.TextSize = math.max(20, math.min(30, getScreenWidth() * 0.03))
+DiscordSideBtn.Font = Enum.Font.GothamBold
+DiscordSideBtn.Visible = true
+Instance.new("UICorner", DiscordSideBtn).CornerRadius = UDim.new(1, 0)
+local DiscordStroke = Instance.new("UIStroke", DiscordSideBtn)
+DiscordStroke.Color = Colors.Discord
+DiscordStroke.Thickness = 2
+
+MakeButtonDraggable(DiscordSideBtn)
+
+DiscordSideBtn.MouseButton1Click:Connect(function()
+    ShowDiscordWindow()
+    DiscordSideBtn.Visible = false
+end)
+
+camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
+    local newBtnSize = math.min(getScreenWidth() * 0.09, 60)
+    SideBtn.Size = UDim2.new(0, newBtnSize, 0, newBtnSize)
+    SideBtn.Position = UDim2.new(0, math.max(10, newBtnSize * 0.3), 0.5, -newBtnSize/2)
+    DiscordSideBtn.Size = UDim2.new(0, newBtnSize, 0, newBtnSize)
+    DiscordSideBtn.Position = UDim2.new(0, getScreenWidth() - newBtnSize - math.max(10, newBtnSize * 0.3), 0.5, -newBtnSize/2)
+end)
+
+-- ==================== اللوحة الرئيسية ====================
+local mainFrameWidth = math.min(getScreenWidth() * 0.9, 450)
+local mainFrameHeight = math.min(getScreenHeight() * 0.85, 620)
+
+if getScreenWidth() > 700 then
+    mainFrameWidth = math.min(450, getScreenWidth() * 0.35)
+    mainFrameHeight = math.min(620, getScreenHeight() * 0.65)
+elseif getScreenWidth() > 500 then
+    mainFrameWidth = math.min(400, getScreenWidth() * 0.7)
+    mainFrameHeight = math.min(580, getScreenHeight() * 0.7)
+else
+    mainFrameWidth = getScreenWidth() * 0.92
+    mainFrameHeight = getScreenHeight() * 0.8
+end
+
+local MainFrame = Instance.new("Frame", ScreenGui)
+MainFrame.Size = UDim2.new(0, mainFrameWidth, 0, mainFrameHeight)
+MainFrame.Position = UDim2.new(0.5, -mainFrameWidth/2, 0.5, -mainFrameHeight/2)
+MainFrame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+MainFrame.BackgroundTransparency = 0.1
+MainFrame.ClipsDescendants = true
+MainFrame.Visible = true
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, math.min(20, mainFrameWidth * 0.04))
+
+CreateRainbowBackground(MainFrame, 0.001)
+local MainRainbowStroke = CreateRainbowFrame(MainFrame, 3, 0.003)
+
+-- ==================== رأس اللوحة ====================
+local headerHeight = math.min(65, mainFrameHeight * 0.12)
+local Header = Instance.new("Frame", MainFrame)
+Header.Size = UDim2.new(1, 0, 0, headerHeight)
+Header.BackgroundColor3 = Colors.Dark
+Header.BackgroundTransparency = 0.2
+Header.BorderSizePixel = 0
+Instance.new("UICorner", Header).CornerRadius = UDim.new(0, math.min(20, mainFrameWidth * 0.04))
+
+local dragBar = Header
+local draggingFrame = false
+local dragStartFrame, startPosFrame
+
+dragBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingFrame = true
+        dragStartFrame = input.Position
+        startPosFrame = MainFrame.Position
+    end
+end)
+
+dragBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        draggingFrame = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingFrame and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStartFrame
+        MainFrame.Position = UDim2.new(startPosFrame.X.Scale, startPosFrame.X.Offset + delta.X, startPosFrame.Y.Scale, startPosFrame.Y.Offset + delta.Y)
+    end
+end)
+
+local Icon = Instance.new("TextLabel", Header)
+Icon.Size = UDim2.new(0, math.min(40, btnSize * 0.8), 0, math.min(40, btnSize * 0.8))
+Icon.Position = UDim2.new(0, 10, 0.5, -math.min(20, btnSize * 0.4))
+Icon.BackgroundTransparency = 1
+Icon.Text = "👑"
+Icon.TextColor3 = Colors.Gold
+Icon.TextSize = math.min(35, math.max(20, getScreenWidth() * 0.025))
+Icon.Font = Enum.Font.GothamBold
+
+local Title = Instance.new("TextLabel", Header)
+Title.Size = UDim2.new(0, mainFrameWidth * 0.5, 0, math.min(40, btnSize * 0.8))
+Title.Position = UDim2.new(0, 50, 0.5, -math.min(20, btnSize * 0.4))
+Title.BackgroundTransparency = 1
+Title.Text = "Moen King"
+Title.TextColor3 = Colors.Gold
+Title.TextSize = math.max(14, math.min(22, getScreenWidth() * 0.018))
+Title.Font = Enum.Font.GothamBold
+Title.TextXAlignment = Enum.TextXAlignment.Left
+
+-- كلمة VIP في المنتصف
+local VipTag = Instance.new("TextLabel", Header)
+VipTag.Size = UDim2.new(0, 45, 0, 22)
+VipTag.Position = UDim2.new(0.5, -22, 0.5, -11)
+VipTag.BackgroundColor3 = Colors.NeonPurple
+VipTag.BackgroundTransparency = 0.2
+VipTag.Text = "VIP"
+VipTag.TextColor3 = Colors.Gold
+VipTag.TextSize = math.max(10, math.min(14, getScreenWidth() * 0.012))
+VipTag.Font = Enum.Font.GothamBold
+Instance.new("UICorner", VipTag).CornerRadius = UDim.new(0, 5)
+
+local btnSizeHeader = math.min(38, btnSize * 0.8)
+
+-- زر الإغلاق
+local CloseBtn = Instance.new("TextButton", Header)
+CloseBtn.Size = UDim2.new(0, btnSizeHeader, 0, btnSizeHeader)
+CloseBtn.Position = UDim2.new(1, -(btnSizeHeader + 8), 0.5, -(btnSizeHeader/2))
+CloseBtn.BackgroundColor3 = Colors.NeonPink
+CloseBtn.BackgroundTransparency = 0.3
+CloseBtn.Text = "X"
+CloseBtn.TextColor3 = Colors.White
+CloseBtn.TextSize = math.max(16, math.min(24, getScreenWidth() * 0.018))
+CloseBtn.Font = Enum.Font.GothamBold
+CloseBtn.BorderSizePixel = 0
+Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 5)
+
+local SettingsBtn = Instance.new("TextButton", Header)
+SettingsBtn.Size = UDim2.new(0, btnSizeHeader, 0, btnSizeHeader)
+SettingsBtn.Position = UDim2.new(1, -(btnSizeHeader * 2 + 12), 0.5, -(btnSizeHeader/2))
+SettingsBtn.BackgroundColor3 = Colors.NeonCyan
+SettingsBtn.BackgroundTransparency = 0.3
+SettingsBtn.Text = "⚙"
+SettingsBtn.TextColor3 = Colors.White
+SettingsBtn.TextSize = math.max(16, math.min(22, getScreenWidth() * 0.016))
+SettingsBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", SettingsBtn).CornerRadius = UDim.new(0, 5)
+
+local PlayersCountBtn = Instance.new("TextButton", Header)
+PlayersCountBtn.Size = UDim2.new(0, btnSizeHeader, 0, btnSizeHeader)
+PlayersCountBtn.Position = UDim2.new(1, -(btnSizeHeader * 3 + 16), 0.5, -(btnSizeHeader/2))
+PlayersCountBtn.BackgroundColor3 = Colors.NeonPurple
+PlayersCountBtn.BackgroundTransparency = 0.3
+PlayersCountBtn.Text = "👥"
+PlayersCountBtn.TextColor3 = Colors.White
+PlayersCountBtn.TextSize = math.max(16, math.min(22, getScreenWidth() * 0.016))
+PlayersCountBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", PlayersCountBtn).CornerRadius = UDim.new(0, 5)
+
+PlayersCountBtn.MouseButton1Click:Connect(function()
+    local count = #Players:GetPlayers()
+    local maxPlayers = game.Players.MaxPlayers
+    local notif = Instance.new("TextLabel", ScreenGui)
+    notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+    notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+    notif.BackgroundColor3 = Colors.Dark
+    notif.Text = "👥 اللاعبين: " .. count .. "/" .. maxPlayers
+    notif.TextColor3 = Colors.NeonCyan
+    notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+    game:GetService("Debris"):AddItem(notif, 2)
+end)
+
+local ScriptsBtn = Instance.new("TextButton", Header)
+ScriptsBtn.Size = UDim2.new(0, btnSizeHeader, 0, btnSizeHeader)
+ScriptsBtn.Position = UDim2.new(1, -(btnSizeHeader * 4 + 24), 0.5, -(btnSizeHeader/2))
+ScriptsBtn.BackgroundColor3 = Colors.NeonOrange
+ScriptsBtn.BackgroundTransparency = 0.3
+ScriptsBtn.Text = "📦"
+ScriptsBtn.TextColor3 = Colors.White
+ScriptsBtn.TextSize = math.max(16, math.min(22, getScreenWidth() * 0.016))
+ScriptsBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", ScriptsBtn).CornerRadius = UDim.new(0, 5)
+
+ScriptsBtn.MouseButton1Click:Connect(function()
+    ShowScriptsWindow()
+end)
+
+-- ==================== المحتوى الرئيسي ====================
+local padding = math.max(8, math.min(15, mainFrameWidth * 0.03))
+local buttonHeightSmall = math.max(35, math.min(45, mainFrameHeight * 0.07))
+local buttonHeight = math.max(50, math.min(60, mainFrameHeight * 0.09))
+
+local Content = Instance.new("ScrollingFrame", MainFrame)
+Content.Size = UDim2.new(1, -padding*2, 1, -(headerHeight + padding))
+Content.Position = UDim2.new(0, padding, 0, headerHeight + padding/2)
+Content.BackgroundTransparency = 1
+Content.CanvasSize = UDim2.new(0, 0, 0, 0)
+Content.ScrollBarThickness = 3
+Content.ScrollBarImageColor3 = Colors.NeonCyan
+
+local Layout = Instance.new("UIListLayout", Content)
+Layout.Padding = UDim.new(0, padding)
+Layout.SortOrder = Enum.SortOrder.LayoutOrder
+
+local function CreateSection(title, icon, color)
+    local Section = Instance.new("Frame", Content)
+    Section.Size = UDim2.new(1, 0, 0, math.max(35, math.min(42, buttonHeight * 0.75)))
+    Section.BackgroundTransparency = 1
+    
+    local Line = Instance.new("Frame", Section)
+    Line.Size = UDim2.new(1, 0, 0, 2)
+    Line.Position = UDim2.new(0, 0, 1, -2)
+    Line.BackgroundColor3 = color or Colors.NeonCyan
+    Line.BackgroundTransparency = 0.5
+    
+    local IconLabel = Instance.new("TextLabel", Section)
+    IconLabel.Size = UDim2.new(0, 30, 1, 0)
+    IconLabel.BackgroundTransparency = 1
+    IconLabel.Text = icon
+    IconLabel.TextColor3 = color or Colors.NeonCyan
+    IconLabel.TextSize = math.max(14, math.min(20, getScreenWidth() * 0.016))
+    
+    local TitleLabel = Instance.new("TextLabel", Section)
+    TitleLabel.Size = UDim2.new(1, -40, 1, 0)
+    TitleLabel.Position = UDim2.new(0, 35, 0, 0)
+    TitleLabel.BackgroundTransparency = 1
+    TitleLabel.Text = title
+    TitleLabel.TextColor3 = Colors.Gray
+    TitleLabel.TextSize = math.max(10, math.min(14, getScreenWidth() * 0.013))
+    TitleLabel.Font = Enum.Font.GothamBold
+    TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
+end
+
+-- القسم 1: شريط الأوامر
+CreateSection("COMMAND BAR", "⌨️", Colors.NeonCyan)
+
+local CommandInput = Instance.new("TextBox", Content)
+CommandInput.Size = UDim2.new(1, 0, 0, buttonHeightSmall)
+CommandInput.BackgroundColor3 = Colors.Dark
+CommandInput.BackgroundTransparency = 0.4
+CommandInput.Text = ""
+CommandInput.PlaceholderText = "✏️ اكتب الأمر هنا..."
+CommandInput.TextColor3 = Colors.White
+CommandInput.PlaceholderColor3 = Colors.Gray
+CommandInput.Font = Enum.Font.Gotham
+CommandInput.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+Instance.new("UICorner", CommandInput).CornerRadius = UDim.new(0, 12)
+
+local SendFrame = Instance.new("Frame", Content)
+SendFrame.Size = UDim2.new(1, 0, 0, buttonHeightSmall)
+SendFrame.BackgroundTransparency = 1
+
+local LoopBtn = Instance.new("TextButton", SendFrame)
+LoopBtn.Size = UDim2.new(0.7, -5, 1, 0)
+LoopBtn.Position = UDim2.new(0, 0, 0, 0)
+LoopBtn.Text = "🚀 إرسال"
+LoopBtn.TextColor3 = Colors.Dark
+LoopBtn.TextSize = math.max(12, math.min(16, getScreenWidth() * 0.015))
+LoopBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", LoopBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(LoopBtn, 0.003)
+
+local LoopCountInput = Instance.new("TextBox", SendFrame)
+LoopCountInput.Size = UDim2.new(0.28, -5, 1, 0)
+LoopCountInput.Position = UDim2.new(0.72, 5, 0, 0)
+LoopCountInput.BackgroundColor3 = Colors.Dark
+LoopCountInput.BackgroundTransparency = 0.4
+LoopCountInput.Text = "1"
+LoopCountInput.PlaceholderText = "عدد"
+LoopCountInput.TextColor3 = Colors.White
+LoopCountInput.Font = Enum.Font.Gotham
+LoopCountInput.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+Instance.new("UICorner", LoopCountInput).CornerRadius = UDim.new(0, 12)
+
+-- القسم 2: الهدف
+CreateSection("TARGET SYSTEM", "🎯", Colors.NeonGreen)
+
+local TargetInput = Instance.new("TextBox", Content)
+TargetInput.Size = UDim2.new(1, 0, 0, buttonHeightSmall)
+TargetInput.BackgroundColor3 = Colors.Dark
+TargetInput.BackgroundTransparency = 0.4
+TargetInput.Text = ""
+TargetInput.PlaceholderText = "👤 اسم الهدف..."
+TargetInput.TextColor3 = Colors.White
+TargetInput.PlaceholderColor3 = Colors.Gray
+TargetInput.Font = Enum.Font.Gotham
+TargetInput.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+Instance.new("UICorner", TargetInput).CornerRadius = UDim.new(0, 12)
+
+local TargetButtonsFrame = Instance.new("Frame", Content)
+TargetButtonsFrame.Size = UDim2.new(1, 0, 0, buttonHeightSmall)
+TargetButtonsFrame.BackgroundTransparency = 1
+
+local CopyNameBtn = Instance.new("TextButton", TargetButtonsFrame)
+CopyNameBtn.Size = UDim2.new(0.48, -5, 1, 0)
+CopyNameBtn.Position = UDim2.new(0, 0, 0, 0)
+CopyNameBtn.BackgroundColor3 = Colors.NeonGreen
+CopyNameBtn.Text = "📋 نسخ الاسم"
+CopyNameBtn.TextColor3 = Colors.Dark
+CopyNameBtn.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+CopyNameBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", CopyNameBtn).CornerRadius = UDim.new(0, 12)
+
+local ClearTargetBtn = Instance.new("TextButton", TargetButtonsFrame)
+ClearTargetBtn.Size = UDim2.new(0.48, -5, 1, 0)
+ClearTargetBtn.Position = UDim2.new(0.52, 0, 0, 0)
+ClearTargetBtn.BackgroundColor3 = Colors.NeonOrange
+ClearTargetBtn.Text = "🗑️ مسح الهدف"
+ClearTargetBtn.TextColor3 = Colors.Dark
+ClearTargetBtn.TextSize = math.max(11, math.min(16, getScreenWidth() * 0.015))
+ClearTargetBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", ClearTargetBtn).CornerRadius = UDim.new(0, 12)
+
+CopyNameBtn.MouseButton1Click:Connect(function()
+    local targetName = TargetInput.Text
+    if targetName ~= "" then
+        pcall(function() setclipboard(targetName) end)
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+        notif.Position = UDim2.new(0.5, -140, 0.85, 0)
+        notif.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+        notif.Text = "✅ تم نسخ الاسم: " .. targetName
+        notif.TextColor3 = Colors.NeonGreen
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        notif.Font = Enum.Font.GothamBold
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 2)
+    else
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+        notif.Position = UDim2.new(0.5, -140, 0.85, 0)
+        notif.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        notif.Text = "⚠️ لا يوجد هدف محدد!"
+        notif.TextColor3 = Colors.White
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        notif.Font = Enum.Font.GothamBold
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 2)
+    end
+end)
+
+ClearTargetBtn.MouseButton1Click:Connect(function()
+    TargetInput.Text = ""
+    local notif = Instance.new("TextLabel", ScreenGui)
+    notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+    notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+    notif.BackgroundColor3 = Colors.Dark
+    notif.Text = "🗑️ تم مسح الهدف"
+    notif.TextColor3 = Colors.NeonOrange
+    notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+    game:GetService("Debris"):AddItem(notif, 2)
+end)
+
+-- القسم 3: أوامر سريعة
+CreateSection("QUICK COMMANDS", "⚡", Colors.NeonOrange)
+
+-- صف الأزرار 1
+local Row1Frame = Instance.new("Frame", Content)
+Row1Frame.Size = UDim2.new(1, 0, 0, buttonHeight)
+Row1Frame.BackgroundTransparency = 1
+
+local AttackBtn = Instance.new("TextButton", Row1Frame)
+AttackBtn.Size = UDim2.new(0.48, -5, 1, 0)
+AttackBtn.Position = UDim2.new(0, 0, 0, 0)
+AttackBtn.Text = "⚔️ هجوم ⚔️"
+AttackBtn.TextColor3 = Colors.White
+AttackBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+AttackBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", AttackBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(AttackBtn, 0.003)
+
+local AttackCountInput = Instance.new("TextBox", Row1Frame)
+AttackCountInput.Size = UDim2.new(0.48, -5, 1, 0)
+AttackCountInput.Position = UDim2.new(0.52, 0, 0, 0)
+AttackCountInput.BackgroundColor3 = Colors.Dark
+AttackCountInput.BackgroundTransparency = 0.4
+AttackCountInput.Text = "1"
+AttackCountInput.PlaceholderText = "العدد"
+AttackCountInput.TextColor3 = Colors.White
+AttackCountInput.Font = Enum.Font.Gotham
+AttackCountInput.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+Instance.new("UICorner", AttackCountInput).CornerRadius = UDim.new(0, 12)
+
+-- صف الأزرار 2 (اختيار لاعب + نسخ الكل)
+local Row2Frame = Instance.new("Frame", Content)
+Row2Frame.Size = UDim2.new(1, 0, 0, buttonHeight)
+Row2Frame.BackgroundTransparency = 1
+
+local SelectPlayerBtn = Instance.new("TextButton", Row2Frame)
+SelectPlayerBtn.Size = UDim2.new(0.48, -5, 1, 0)
+SelectPlayerBtn.Position = UDim2.new(0, 0, 0, 0)
+SelectPlayerBtn.BackgroundColor3 = Colors.Dark
+SelectPlayerBtn.Text = "🎮 اختيار لاعب"
+SelectPlayerBtn.TextColor3 = Colors.White
+SelectPlayerBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+SelectPlayerBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", SelectPlayerBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(SelectPlayerBtn, 0.003)
+
+local MoenScriptBtn = Instance.new("TextButton", Row2Frame)
+MoenScriptBtn.Size = UDim2.new(0.48, -5, 1, 0)
+MoenScriptBtn.Position = UDim2.new(0.52, 0, 0, 0)
+MoenScriptBtn.Text = "🔥 نسخ الكل 🔥"
+MoenScriptBtn.TextColor3 = Colors.White
+MoenScriptBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+MoenScriptBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", MoenScriptBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(MoenScriptBtn, 0.003)
+
+-- نافذة اختيار اللاعبين
+local PlayerListFrame = Instance.new("Frame", ScreenGui)
+PlayerListFrame.Size = UDim2.new(0, math.min(getScreenWidth() * 0.85, 320), 0, math.min(getScreenHeight() * 0.6, 400))
+PlayerListFrame.Position = UDim2.new(0.5, -math.min(getScreenWidth() * 0.425, 160), 0.5, -math.min(getScreenHeight() * 0.3, 200))
+PlayerListFrame.BackgroundColor3 = Colors.Glass
+PlayerListFrame.BackgroundTransparency = 0.1
+PlayerListFrame.Visible = false
+PlayerListFrame.Active = true
+Instance.new("UICorner", PlayerListFrame).CornerRadius = UDim.new(0, 18)
+Instance.new("UIStroke", PlayerListFrame).Color = Colors.NeonCyan
+
+local ListHeader = Instance.new("Frame", PlayerListFrame)
+ListHeader.Size = UDim2.new(1, 0, 0, 45)
+ListHeader.BackgroundColor3 = Colors.Dark
+ListHeader.BackgroundTransparency = 0.5
+Instance.new("UICorner", ListHeader).CornerRadius = UDim.new(0, 18)
+
+local ListTitle = Instance.new("TextLabel", ListHeader)
+ListTitle.Size = UDim2.new(1, -45, 1, 0)
+ListTitle.Position = UDim2.new(0, 12, 0, 0)
+ListTitle.BackgroundTransparency = 1
+ListTitle.Text = "👥 اختيار لاعب"
+ListTitle.TextColor3 = Colors.NeonCyan
+ListTitle.TextSize = math.max(12, math.min(16, getScreenWidth() * 0.015))
+
+local ListClose = Instance.new("TextButton", ListHeader)
+ListClose.Size = UDim2.new(0, 35, 0, 35)
+ListClose.Position = UDim2.new(1, -42, 0.5, -17.5)
+ListClose.BackgroundColor3 = Colors.NeonPink
+ListClose.Text = "X"
+ListClose.TextSize = 22
+Instance.new("UICorner", ListClose).CornerRadius = UDim.new(0, 5)
+ListClose.MouseButton1Click:Connect(function() PlayerListFrame.Visible = false end)
+
+MakeDraggable(PlayerListFrame, ListHeader)
+
+local PlayerScroll = Instance.new("ScrollingFrame", PlayerListFrame)
+PlayerScroll.Size = UDim2.new(1, -15, 1, -60)
+PlayerScroll.Position = UDim2.new(0, 7, 0, 52)
+PlayerScroll.BackgroundTransparency = 1
+
+local PlayerLayout = Instance.new("UIListLayout", PlayerScroll)
+PlayerLayout.Padding = UDim.new(0, 5)
+
+local function UpdatePlayerListWindow()
+    for _, v in ipairs(PlayerScroll:GetChildren()) do
+        if v:IsA("TextButton") then v:Destroy() end
+    end
+    
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= plr then
+            local btn = Instance.new("TextButton", PlayerScroll)
+            btn.Size = UDim2.new(1, 0, 0, 40)
+            btn.BackgroundColor3 = Colors.Dark
+            btn.Text = player.Name
+            btn.TextColor3 = Colors.White
+            btn.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 8)
+            
+            btn.MouseButton1Click:Connect(function()
+                TargetInput.Text = player.Name
+                SelectPlayerBtn.Text = "✅ " .. player.Name
+                SelectPlayerBtn.TextColor3 = Colors.NeonGreen
+                PlayerListFrame.Visible = false
+                
+                local copyNotif = Instance.new("TextLabel", ScreenGui)
+                copyNotif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+                copyNotif.Position = UDim2.new(0.5, -125, 0.5, -150)
+                copyNotif.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+                copyNotif.BackgroundTransparency = 0.1
+                copyNotif.Text = "✅ تم اختيار: " .. player.Name
+                copyNotif.TextColor3 = Colors.NeonGreen
+                copyNotif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+                copyNotif.Font = Enum.Font.GothamBold
+                Instance.new("UICorner", copyNotif).CornerRadius = UDim.new(0, 10)
+                game:GetService("Debris"):AddItem(copyNotif, 2)
+            end)
+        end
+    end
+    
+    PlayerScroll.CanvasSize = UDim2.new(0, 0, 0, PlayerLayout.AbsoluteContentSize.Y + 10)
+end
+
+UpdatePlayerListWindow()
+Players.PlayerAdded:Connect(UpdatePlayerListWindow)
+Players.PlayerRemoving:Connect(UpdatePlayerListWindow)
+
+SelectPlayerBtn.MouseButton1Click:Connect(function()
+    UpdatePlayerListWindow()
+    PlayerListFrame.Visible = true
+end)
+
+-- صف الأزرار 3
+local Row3Frame = Instance.new("Frame", Content)
+Row3Frame.Size = UDim2.new(1, 0, 0, buttonHeight)
+Row3Frame.BackgroundTransparency = 1
+
+local HeadlessBtn = Instance.new("TextButton", Row3Frame)
+HeadlessBtn.Size = UDim2.new(0.48, -5, 1, 0)
+HeadlessBtn.Position = UDim2.new(0, 0, 0, 0)
+HeadlessBtn.Text = "👤 راس مخفي"
+HeadlessBtn.TextColor3 = Colors.White
+HeadlessBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+HeadlessBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", HeadlessBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(HeadlessBtn, 0.003)
+
+local SkyboxBtn = Instance.new("TextButton", Row3Frame)
+SkyboxBtn.Size = UDim2.new(0.48, -5, 1, 0)
+SkyboxBtn.Position = UDim2.new(0.52, 0, 0, 0)
+SkyboxBtn.Text = "🦒 تمديد جسم"
+SkyboxBtn.TextColor3 = Colors.White
+SkyboxBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+SkyboxBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", SkyboxBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(SkyboxBtn, 0.003)
+
+-- صف الأزرار 4
+local Row4Frame = Instance.new("Frame", Content)
+Row4Frame.Size = UDim2.new(1, 0, 0, buttonHeight)
+Row4Frame.BackgroundTransparency = 1
+
+local AntiSpamBtn = Instance.new("TextButton", Row4Frame)
+AntiSpamBtn.Size = UDim2.new(0.48, -5, 1, 0)
+AntiSpamBtn.Position = UDim2.new(0, 0, 0, 0)
+AntiSpamBtn.Text = "🛡️ حمايه"
+AntiSpamBtn.TextColor3 = Colors.White
+AntiSpamBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+AntiSpamBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", AntiSpamBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(AntiSpamBtn, 0.003)
+
+local ServerBtn = Instance.new("TextButton", Row4Frame)
+ServerBtn.Size = UDim2.new(0.48, -5, 1, 0)
+ServerBtn.Position = UDim2.new(0.52, 0, 0, 0)
+ServerBtn.Text = "🌐 انتقال سريع"
+ServerBtn.TextColor3 = Colors.White
+ServerBtn.TextSize = math.max(11, math.min(15, getScreenWidth() * 0.013))
+ServerBtn.Font = Enum.Font.GothamBold
+Instance.new("UICorner", ServerBtn).CornerRadius = UDim.new(0, 12)
+MakeButtonRainbow(ServerBtn, 0.003)
+
+-- ==================== سكربت موين (نسخ الأسماء) ====================
+MoenScriptBtn.MouseButton1Click:Connect(function()
+    local allNames = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= plr then
+            table.insert(allNames, player.Name)
+        end
+    end
+    
+    local namesText = table.concat(allNames, "\n")
+    pcall(function() setclipboard(namesText) end)
+    
+    local notif = Instance.new("TextLabel", ScreenGui)
+    notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.3, 300), 0, math.min(getScreenHeight() * 0.05, 40))
+    notif.Position = UDim2.new(0.5, -150, 0.85, 0)
+    notif.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    notif.Text = "✅ تم نسخ " .. #allNames .. " اسم (كل اللاعبين)"
+    notif.TextColor3 = Color3.fromRGB(0, 255, 100)
+    notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    notif.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+    game:GetService("Debris"):AddItem(notif, 2)
+    
+    TweenService:Create(MoenScriptBtn, TweenInfo.new(0.1), {BackgroundColor3 = Color3.fromRGB(0, 255, 0)}):Play()
+    task.wait(0.1)
+    MakeButtonRainbow(MoenScriptBtn, 0.003)
+end)
+
+-- ==================== عرض فقاعة للجميع ====================
+local function PlayAttackAnimation()
+    local originalPosition = MainFrame.Position
+    for i = 1, 4 do
+        TweenService:Create(MainFrame, TweenInfo.new(0.03), {
+            Position = UDim2.new(originalPosition.X.Scale, originalPosition.X.Offset + (i % 2 == 0 and 3 or -3), 
+                                 originalPosition.Y.Scale, originalPosition.Y.Offset)
+        }):Play()
+        task.wait(0.03)
+    end
+    TweenService:Create(MainFrame, TweenInfo.new(0.05), {Position = originalPosition}):Play()
+    
+    local sound = Instance.new("Sound")
+    sound.SoundId = "rbxassetid://9120382150"
+    sound.Volume = 0.4
+    sound.Parent = workspace
+    sound:Play()
+    game:GetService("Debris"):AddItem(sound, 2)
+end
+
+Layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    Content.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + padding)
+end)
+
+-- ==================== إعدادات السكربت ====================
+local currentPrefix = ";"
+local attackCommands = { "clogs [target]", "re [target]" }
+local isHeadless, isSkyboxEnabled = false, false
+local antiSpamActive = false
+local bodyParts = {}
+
+local function IsTargetProtected(targetName)
+    if not targetName or targetName == "" then return false end
+    if targetName:lower() == DEVELOPER_NAME:lower() then return true end
+    return targetName:lower() == SCRIPT_OWNER:lower()
+end
+
+local function SaveCommands()
+    pcall(function() writefile("Moen_King_Config.json", HttpService:JSONEncode(attackCommands)) end)
+end
+
+local function LoadCommands()
+    pcall(function()
+        if isfile and isfile("Moen_King_Config.json") then
+            local loaded = HttpService:JSONDecode(readfile("Moen_King_Config.json"))
+            if type(loaded) == "table" and #loaded > 0 then
+                attackCommands = loaded
+            end
+        end
+    end)
+end
+LoadCommands()
+
+-- ==================== وظيفة تمديد الجسم ====================
+local function ToggleBodyExtension()
+    local character = plr.Character
+    if not character then 
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+        notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+        notif.BackgroundColor3 = Colors.NeonOrange
+        notif.Text = "⚠️ انتظر حتى تظهر شخصيتك"
+        notif.TextColor3 = Colors.Dark
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 2)
+        return 
+    end
+    
+    if not isSkyboxEnabled then
+        isSkyboxEnabled = true
+        
+        local humanoid = character:FindFirstChild("Humanoid")
+        local rootPart = character:FindFirstChild("HumanoidRootPart")
+        
+        if humanoid and rootPart then
+            for _, part in ipairs(character:GetDescendants()) do
+                if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+                    local originalSize = part.Size
+                    part.Size = originalSize * 1.3
+                    table.insert(bodyParts, {part = part, originalSize = originalSize})
+                end
+            end
+            
+            local effect = Instance.new("ParticleEmitter", rootPart)
+            effect.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+            effect.Rate = 50
+            effect.Lifetime = NumberRange.new(0.5)
+            effect.SpreadAngle = Vector2.new(360, 360)
+            effect.VelocityInheritance = 0
+            effect.Speed = NumberRange.new(2)
+            effect.Color = ColorSequence.new(Color3.fromRGB(255, 100, 0))
+            table.insert(bodyParts, effect)
+            
+            task.delay(2, function()
+                if effect and effect.Parent then effect:Destroy() end
+            end)
+            
+            SkyboxBtn.Text = "🦒 تمديد جسم: ON"
+            SkyboxBtn.BackgroundColor3 = Colors.NeonGreen
+            ShowGlobalBubble("تم تمديد الجسم بنجاح!")
+            
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+            notif.BackgroundColor3 = Colors.NeonGreen
+            notif.Text = "🦒 تم تمديد الجسم!"
+            notif.TextColor3 = Colors.Dark
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 2)
+        end
+    else
+        isSkyboxEnabled = false
+        
+        for _, item in ipairs(bodyParts) do
+            if item.part and item.originalSize then
+                pcall(function()
+                    item.part.Size = item.originalSize
+                end)
+            elseif item:IsA("ParticleEmitter") then
+                pcall(function() item:Destroy() end)
+            elseif item:IsA("Attachment") then
+                pcall(function() item:Destroy() end)
+            end
+        end
+        bodyParts = {}
+        
+        SkyboxBtn.Text = "🦒 تمديد جسم"
+        SkyboxBtn.BackgroundColor3 = Colors.Dark
+        ShowGlobalBubble("تم إلغاء تمديد الجسم")
+        
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+        notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+        notif.BackgroundColor3 = Colors.NeonOrange
+        notif.Text = "🔁 تم إلغاء تمديد الجسم"
+        notif.TextColor3 = Colors.Dark
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 2)
+    end
+end
+
+plr.CharacterAdded:Connect(function(character)
+    task.wait(1)
+    if isSkyboxEnabled then
+        ToggleBodyExtension()
+    end
+end)
+
+-- ==================== نافذة الإعدادات ====================
+local settingsWidth = math.min(getScreenWidth() * 0.85, 420)
+local settingsHeight = math.min(getScreenHeight() * 0.75, 580)
+
+if getScreenWidth() > 700 then
+    settingsWidth = math.min(420, getScreenWidth() * 0.35)
+    settingsHeight = math.min(580, getScreenHeight() * 0.55)
+elseif getScreenWidth() > 500 then
+    settingsWidth = math.min(380, getScreenWidth() * 0.7)
+    settingsHeight = math.min(520, getScreenHeight() * 0.6)
+else
+    settingsWidth = getScreenWidth() * 0.92
+    settingsHeight = getScreenHeight() * 0.7
+end
+
+local SettingsFrame = Instance.new("Frame", ScreenGui)
+SettingsFrame.Size = UDim2.new(0, settingsWidth, 0, settingsHeight)
+SettingsFrame.Position = UDim2.new(0.5, -settingsWidth/2, 0.5, -settingsHeight/2)
+SettingsFrame.BackgroundColor3 = Colors.Glass
+SettingsFrame.BackgroundTransparency = 0.1
+SettingsFrame.Visible = false
+Instance.new("UICorner", SettingsFrame).CornerRadius = UDim.new(0, 20)
+CreateRainbowFrame(SettingsFrame, 3, 0.003)
+
+local headerHeightSettings = math.min(60, settingsHeight * 0.11)
+local SettingsHeader = Instance.new("Frame", SettingsFrame)
+SettingsHeader.Size = UDim2.new(1, 0, 0, headerHeightSettings)
+SettingsHeader.BackgroundColor3 = Colors.Dark
+SettingsHeader.BackgroundTransparency = 0.5
+Instance.new("UICorner", SettingsHeader).CornerRadius = UDim.new(0, 20)
+
+MakeDraggable(SettingsFrame, SettingsHeader)
+
+local SettingsTitle = Instance.new("TextLabel", SettingsHeader)
+SettingsTitle.Size = UDim2.new(1, -80, 1, 0)
+SettingsTitle.Position = UDim2.new(0, 15, 0, 0)
+SettingsTitle.BackgroundTransparency = 1
+SettingsTitle.Text = "⚙ إعدادات Moen_King 👑"
+SettingsTitle.TextColor3 = Colors.Gold
+SettingsTitle.TextSize = math.max(12, math.min(16, getScreenWidth() * 0.015))
+
+local SettingsClose = Instance.new("TextButton", SettingsHeader)
+SettingsClose.Size = UDim2.new(0, 38, 0, 38)
+SettingsClose.Position = UDim2.new(1, -48, 0.5, -19)
+SettingsClose.BackgroundColor3 = Colors.NeonPink
+SettingsClose.BackgroundTransparency = 0.3
+SettingsClose.Text = "X"
+SettingsClose.TextSize = 22
+Instance.new("UICorner", SettingsClose).CornerRadius = UDim.new(0, 5)
+SettingsClose.MouseButton1Click:Connect(function() SettingsFrame.Visible = false end)
+
+local SettingsScroll = Instance.new("ScrollingFrame", SettingsFrame)
+SettingsScroll.Size = UDim2.new(1, -20, 1, -(headerHeightSettings + 12))
+SettingsScroll.Position = UDim2.new(0, 10, 0, headerHeightSettings + 8)
+SettingsScroll.BackgroundTransparency = 1
+SettingsScroll.ScrollBarThickness = 3
+
+local SettingsLayout = Instance.new("UIListLayout", SettingsScroll)
+SettingsLayout.Padding = UDim.new(0, math.max(5, math.min(10, padding)))
+SettingsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+
+-- إعداد البادئة
+local GeneralTitle = Instance.new("TextLabel", SettingsScroll)
+GeneralTitle.Size = UDim2.new(1, 0, 0, 30)
+GeneralTitle.BackgroundTransparency = 1
+GeneralTitle.Text = "⚙️ الإعدادات العامة"
+GeneralTitle.TextColor3 = Colors.NeonCyan
+GeneralTitle.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+GeneralTitle.Font = Enum.Font.GothamBold
+GeneralTitle.LayoutOrder = 1
+
+local PrefixFrame = Instance.new("Frame", SettingsScroll)
+PrefixFrame.Size = UDim2.new(1, 0, 0, 45)
+PrefixFrame.BackgroundTransparency = 1
+PrefixFrame.LayoutOrder = 2
+
+local PrefixLabel = Instance.new("TextLabel", PrefixFrame)
+PrefixLabel.Size = UDim2.new(0.3, 0, 1, 0)
+PrefixLabel.BackgroundTransparency = 1
+PrefixLabel.Text = "بادئة الأوامر:"
+PrefixLabel.TextColor3 = Colors.White
+PrefixLabel.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+
+local PrefixBox = Instance.new("TextBox", PrefixFrame)
+PrefixBox.Size = UDim2.new(0.65, 0, 1, 0)
+PrefixBox.Position = UDim2.new(0.35, 0, 0, 0)
+PrefixBox.BackgroundColor3 = Colors.Dark
+PrefixBox.Text = currentPrefix
+PrefixBox.PlaceholderText = "Prefix"
+PrefixBox.TextColor3 = Colors.White
+PrefixBox.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+Instance.new("UICorner", PrefixBox).CornerRadius = UDim.new(0, 10)
+PrefixBox:GetPropertyChangedSignal("Text"):Connect(function() currentPrefix = PrefixBox.Text end)
+
+-- قسم الأوامر
+local CmdSectionTitle = Instance.new("TextLabel", SettingsScroll)
+CmdSectionTitle.Size = UDim2.new(1, 0, 0, 30)
+CmdSectionTitle.BackgroundTransparency = 1
+CmdSectionTitle.Text = "📋 إدارة الأوامر"
+CmdSectionTitle.TextColor3 = Colors.NeonCyan
+CmdSectionTitle.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+CmdSectionTitle.Font = Enum.Font.GothamBold
+CmdSectionTitle.LayoutOrder = 3
+
+local AddCmdInput = Instance.new("TextBox", SettingsScroll)
+AddCmdInput.Size = UDim2.new(1, 0, 0, 40)
+AddCmdInput.BackgroundColor3 = Colors.Dark
+AddCmdInput.Text = ""
+AddCmdInput.PlaceholderText = "أمر جديد... (مثال: kill [target])"
+AddCmdInput.TextColor3 = Colors.White
+AddCmdInput.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+Instance.new("UICorner", AddCmdInput).CornerRadius = UDim.new(0, 10)
+AddCmdInput.LayoutOrder = 4
+
+local AddCmdBtn = Instance.new("TextButton", SettingsScroll)
+AddCmdBtn.Size = UDim2.new(1, 0, 0, 40)
+AddCmdBtn.Text = "➕ إضافة الأمر"
+AddCmdBtn.TextColor3 = Colors.Dark
+AddCmdBtn.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+Instance.new("UICorner", AddCmdBtn).CornerRadius = UDim.new(0, 10)
+AddCmdBtn.LayoutOrder = 5
+MakeButtonRainbow(AddCmdBtn, 0.003)
+
+local CmdListTitle = Instance.new("TextLabel", SettingsScroll)
+CmdListTitle.Size = UDim2.new(1, 0, 0, 25)
+CmdListTitle.BackgroundTransparency = 1
+CmdListTitle.Text = "الأوامر الحالية (اضغط لحذف):"
+CmdListTitle.TextColor3 = Colors.Gray
+CmdListTitle.TextSize = math.max(10, math.min(12, getScreenWidth() * 0.011))
+CmdListTitle.LayoutOrder = 6
+
+local CmdScroll = Instance.new("ScrollingFrame", SettingsScroll)
+CmdScroll.Size = UDim2.new(1, 0, 0, math.min(150, settingsHeight * 0.28))
+CmdScroll.BackgroundColor3 = Colors.Dark
+CmdScroll.BackgroundTransparency = 0.3
+CmdScroll.ScrollBarThickness = 3
+Instance.new("UICorner", CmdScroll).CornerRadius = UDim.new(0, 10)
+CmdScroll.LayoutOrder = 7
+
+local CmdLayout = Instance.new("UIListLayout", CmdScroll)
+CmdLayout.Padding = UDim.new(0, 4)
+
+local function UpdateCmdList()
+    for _, v in ipairs(CmdScroll:GetChildren()) do 
+        if v:IsA("TextButton") then v:Destroy() end 
+    end
+    
+    for i, cmd in ipairs(attackCommands) do
+        local b = Instance.new("TextButton", CmdScroll)
+        b.Size = UDim2.new(1, 0, 0, 34)
+        b.BackgroundColor3 = Colors.Dark
+        b.Text = cmd .. "  ❌"
+        b.TextColor3 = Colors.White
+        b.TextSize = math.max(9, math.min(12, getScreenWidth() * 0.011))
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+        b.MouseButton1Click:Connect(function()
+            table.remove(attackCommands, i)
+            SaveCommands()
+            UpdateCmdList()
+        end)
+    end
+    
+    CmdScroll.CanvasSize = UDim2.new(0, 0, 0, CmdLayout.AbsoluteContentSize.Y + 10)
+end
+
+UpdateCmdList()
+CmdLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    CmdScroll.CanvasSize = UDim2.new(0, 0, 0, CmdLayout.AbsoluteContentSize.Y + 10)
+end)
+
+AddCmdBtn.MouseButton1Click:Connect(function()
+    local newCmd = AddCmdInput.Text
+    if newCmd ~= "" then
+        if not newCmd:find("%[target%]") then
+            newCmd = newCmd .. " [target]"
+        end
+        table.insert(attackCommands, newCmd)
+        SaveCommands()
+        UpdateCmdList()
+        AddCmdInput.Text = ""
+        
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 30))
+        notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+        notif.BackgroundColor3 = Colors.Dark
+        notif.Text = "✅ تم إضافة الأمر"
+        notif.TextColor3 = Colors.NeonGreen
+        notif.TextSize = math.max(9, math.min(12, getScreenWidth() * 0.011))
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 8)
+        game:GetService("Debris"):AddItem(notif, 2)
+    end
+end)
+
+-- قسم معلومات (بدون زر إعادة ضبط)
+local InfoTitle = Instance.new("TextLabel", SettingsScroll)
+InfoTitle.Size = UDim2.new(1, 0, 0, 30)
+InfoTitle.BackgroundTransparency = 1
+InfoTitle.Text = "ℹ️ معلومات السكربت"
+InfoTitle.TextColor3 = Colors.NeonCyan
+InfoTitle.TextSize = math.max(11, math.min(14, getScreenWidth() * 0.013))
+InfoTitle.Font = Enum.Font.GothamBold
+InfoTitle.LayoutOrder = 8
+
+local InfoFrame = Instance.new("Frame", SettingsScroll)
+InfoFrame.Size = UDim2.new(1, 0, 0, 110)
+InfoFrame.BackgroundColor3 = Colors.Dark
+InfoFrame.BackgroundTransparency = 0.3
+Instance.new("UICorner", InfoFrame).CornerRadius = UDim.new(0, 10)
+InfoFrame.LayoutOrder = 9
+
+local InfoText = Instance.new("TextLabel", InfoFrame)
+InfoText.Size = UDim2.new(1, -15, 1, -10)
+InfoText.Position = UDim2.new(0, 7, 0, 5)
+InfoText.BackgroundTransparency = 1
+InfoText.Text = "👑 الإصدار: " .. CURRENT_VERSION .. "\n👤 المطور: fahad_moen3\n📱 يدعم جميع الأجهزة\n⚡ نظام هجوم ذكي\n🛡️ حماية مدمجة\n🦒 تمديد جسم حقيقي"
+InfoText.TextColor3 = Colors.Gray
+InfoText.TextSize = math.max(10, math.min(12, getScreenWidth() * 0.011))
+InfoText.TextXAlignment = Enum.TextXAlignment.Left
+InfoText.LineHeight = 1.3
+
+SettingsLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+    SettingsScroll.CanvasSize = UDim2.new(0, 0, 0, SettingsLayout.AbsoluteContentSize.Y + 15)
+end)
+
+-- ==================== Remote ====================
+local remote = ReplicatedStorage:WaitForChild("HDAdminHDClient"):WaitForChild("Signals"):WaitForChild("RequestCommandSilent")
+
+local deleteTargets = {
+    PlayerGui = {"CommandMenucommandLogs", "CommandMenuchatLogs", "Notices", "CustomTopBar", "CmdBar"},
+}
+
+local function toggleLOR_Assets(state)
+    pcall(function()
+        local assets = ReplicatedStorage:WaitForChild("HDAdminHDClient"):WaitForChild("Signals").Parent:WaitForChild("Assets")
+        local nv = assets:FindFirstChild(state == "start" and "NightVision" or "1NightVision")
+        if nv then nv.Name = (state == "start" and "1NightVision" or "NightVision") end
+        local templates = plr.PlayerGui:WaitForChild("HDAdminInterface"):WaitForChild("MenuTemplates")
+        local temp = templates:FindFirstChild(state == "start" and "Template5" or "Template")
+        if temp then temp.Name = (state == "start" and "Template" or "Template5") end
+    end)
+end
+
+RunService.Heartbeat:Connect(function()
+    if antiSpamActive then
+        pcall(function()
+            for _, name in ipairs(deleteTargets.PlayerGui) do
+                local t = plr.PlayerGui:FindFirstChild(name, true)
+                if t then t:Destroy() end
+            end
+        end)
+    end
+end)
+
+-- ==================== الأحداث ====================
+LoopBtn.MouseButton1Click:Connect(function()
+    local count = tonumber(LoopCountInput.Text) or 1
+    count = math.clamp(count, 1, 1000000)
+    local command = CommandInput.Text
+    
+    if command ~= "" then
+        task.spawn(function()
+            for i = 1, count do
+                pcall(function()
+                    remote:InvokeServer(command)
+                    ShowGlobalBubble(command)
+                end)
+                task.wait(0.05)
+            end
+        end)
+    end
+end)
+
+-- ==================== زر بدء هجوم ====================
+AttackBtn.MouseButton1Click:Connect(function()
+    if attackRunning then
+        attackRunning = false
+        if attackCoroutine then
+            task.cancel(attackCoroutine)
+            attackCoroutine = nil
+        end
+        AttackBtn.Text = "⚔️ هجوم ⚔️"
+        MakeButtonRainbow(AttackBtn, 0.003)
+        
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+        notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+        notif.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+        notif.Text = "⏹️ تم إيقاف الهجوم!"
+        notif.TextColor3 = Colors.White
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 2)
+    else
+        local target = TargetInput.Text
+        local count = tonumber(AttackCountInput.Text) or 1
+        count = math.clamp(count, 1, 1000000)
+        
+        if target == "" then
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+            notif.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            notif.Text = "⚠️ الرجاء تحديد هدف أولاً!"
+            notif.TextColor3 = Colors.White
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 2)
+            return
+        end
+        
+        if IsTargetProtected(target) then
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+            notif.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            notif.Text = "🛡️ لا يمكن استهداف المطور fahad_moen3!"
+            notif.TextColor3 = Colors.White
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 2)
+            return
+        end
+        
+        attackRunning = true
+        AttackBtn.Text = "⏹️ إيقاف"
+        AttackBtn.BackgroundColor3 = Colors.NeonOrange
+        PlayAttackAnimation()
+        
+        local notif = Instance.new("TextLabel", ScreenGui)
+        notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.35, 350), 0, math.min(getScreenHeight() * 0.05, 40))
+        notif.Position = UDim2.new(0.5, -175, 0.8, 0)
+        notif.BackgroundColor3 = Colors.NeonOrange
+        notif.Text = "⚔️ بدء هجوم " .. count .. " مرة على " .. target
+        notif.TextColor3 = Colors.White
+        notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+        game:GetService("Debris"):AddItem(notif, 3)
+        
+        attackCoroutine = task.spawn(function()
+            local sentCount = 0
+            while attackRunning and sentCount < count do
+                for _, cmd in ipairs(attackCommands) do
+                    if not attackRunning then break end
+                    local fullCommand = currentPrefix .. cmd:gsub("%[target%]", target)
+                    pcall(function()
+                        remote:InvokeServer(fullCommand)
+                        ShowGlobalBubble(fullCommand)
+                        sentCount = sentCount + 1
+                    end)
+                    task.wait(0.05)
+                end
+            end
+            
+            if attackRunning then
+                attackRunning = false
+                if attackCoroutine then
+                    task.cancel(attackCoroutine)
+                    attackCoroutine = nil
+                end
+                AttackBtn.Text = "⚔️ هجوم ⚔️"
+                MakeButtonRainbow(AttackBtn, 0.003)
+                
+                local doneNotif = Instance.new("TextLabel", ScreenGui)
+                doneNotif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.35, 350), 0, math.min(getScreenHeight() * 0.05, 40))
+                doneNotif.Position = UDim2.new(0.5, -175, 0.75, 0)
+                doneNotif.BackgroundColor3 = Colors.NeonGreen
+                doneNotif.Text = "✅ تم إرسال " .. sentCount .. " أمر على " .. target
+                doneNotif.TextColor3 = Colors.Dark
+                doneNotif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+                Instance.new("UICorner", doneNotif).CornerRadius = UDim.new(0, 10)
+                game:GetService("Debris"):AddItem(doneNotif, 3)
+            end
+        end)
+    end
+end)
+
+-- راس مخفي
+HeadlessBtn.MouseButton1Click:Connect(function()
+    isHeadless = not isHeadless
+    local command = currentPrefix .. (isHeadless and "head me 134082579" or "re me")
+    pcall(function()
+        remote:InvokeServer(command)
+        ShowGlobalBubble(command)
+    end)
+    HeadlessBtn.Text = isHeadless and "👤 راس مخفي: ON" or "👤 راس مخفي"
+    HeadlessBtn.BackgroundColor3 = isHeadless and Colors.NeonGreen or Colors.Dark
+    
+    local notif = Instance.new("TextLabel", ScreenGui)
+    notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+    notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+    notif.BackgroundColor3 = isHeadless and Colors.NeonGreen or Colors.NeonOrange
+    notif.Text = isHeadless and "✅ تم إخفاء الرأس" or "❌ تم إظهار الرأس"
+    notif.TextColor3 = Colors.Dark
+    notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+    game:GetService("Debris"):AddItem(notif, 2)
+end)
+
+-- تمديد جسم
+SkyboxBtn.MouseButton1Click:Connect(function()
+    ToggleBodyExtension()
+end)
+
+-- حمايه
+AntiSpamBtn.MouseButton1Click:Connect(function()
+    antiSpamActive = not antiSpamActive
+    AntiSpamBtn.Text = antiSpamActive and "🛡️ حمايه: ON" or "🛡️ حمايه"
+    AntiSpamBtn.BackgroundColor3 = antiSpamActive and Colors.NeonGreen or Colors.Dark
+    if antiSpamActive then toggleLOR_Assets("start") else toggleLOR_Assets("stop") end
+    
+    local notif = Instance.new("TextLabel", ScreenGui)
+    notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.22, 250), 0, math.min(getScreenHeight() * 0.04, 35))
+    notif.Position = UDim2.new(0.5, -125, 0.8, 0)
+    notif.BackgroundColor3 = antiSpamActive and Colors.NeonGreen or Colors.NeonOrange
+    notif.Text = antiSpamActive and "🛡️ تم تفعيل الحماية" or "🔓 تم إيقاف الحماية"
+    notif.TextColor3 = Colors.Dark
+    notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+    game:GetService("Debris"):AddItem(notif, 2)
+end)
+
+-- انتقال سريع
+ServerBtn.MouseButton1Click:Connect(function()
+    local ServerFrame = Instance.new("Frame", ScreenGui)
+    local serverWidth = math.min(getScreenWidth() * 0.85, 380)
+    local serverHeight = math.min(getScreenHeight() * 0.6, 450)
+    
+    if getScreenWidth() > 700 then
+        serverWidth = math.min(380, getScreenWidth() * 0.35)
+        serverHeight = math.min(450, getScreenHeight() * 0.5)
+    elseif getScreenWidth() > 500 then
+        serverWidth = math.min(350, getScreenWidth() * 0.6)
+        serverHeight = math.min(400, getScreenHeight() * 0.55)
+    else
+        serverWidth = getScreenWidth() * 0.92
+        serverHeight = getScreenHeight() * 0.6
+    end
+    
+    ServerFrame.Size = UDim2.new(0, serverWidth, 0, serverHeight)
+    ServerFrame.Position = UDim2.new(0.5, -serverWidth/2, 0.5, -serverHeight/2)
+    ServerFrame.BackgroundColor3 = Colors.Glass
+    ServerFrame.BackgroundTransparency = 0.1
+    Instance.new("UICorner", ServerFrame).CornerRadius = UDim.new(0, 18)
+    Instance.new("UIStroke", ServerFrame).Color = Colors.NeonCyan
+    
+    local ServerHeader = Instance.new("Frame", ServerFrame)
+    ServerHeader.Size = UDim2.new(1, 0, 0, 40)
+    ServerHeader.BackgroundColor3 = Colors.Dark
+    Instance.new("UICorner", ServerHeader).CornerRadius = UDim.new(0, 18)
+    
+    local ServerTitle = Instance.new("TextLabel", ServerHeader)
+    ServerTitle.Size = UDim2.new(1, -45, 1, 0)
+    ServerTitle.Position = UDim2.new(0, 12, 0, 0)
+    ServerTitle.BackgroundTransparency = 1
+    ServerTitle.Text = "🌐 اختيار السيرفر"
+    ServerTitle.TextColor3 = Colors.NeonCyan
+    ServerTitle.TextSize = math.max(12, math.min(16, getScreenWidth() * 0.015))
+    
+    local ServerClose = Instance.new("TextButton", ServerHeader)
+    ServerClose.Size = UDim2.new(0, 32, 0, 32)
+    ServerClose.Position = UDim2.new(1, -40, 0.5, -16)
+    ServerClose.BackgroundColor3 = Colors.NeonPink
+    ServerClose.Text = "X"
+    ServerClose.TextSize = 20
+    Instance.new("UICorner", ServerClose).CornerRadius = UDim.new(0, 5)
+    ServerClose.MouseButton1Click:Connect(function() ServerFrame:Destroy() end)
+    
+    MakeDraggable(ServerFrame, ServerHeader)
+    
+    local ServerScroll = Instance.new("ScrollingFrame", ServerFrame)
+    ServerScroll.Size = UDim2.new(1, -15, 1, -55)
+    ServerScroll.Position = UDim2.new(0, 7, 0, 48)
+    ServerScroll.BackgroundTransparency = 1
+    
+    local ServerLayout = Instance.new("UIListLayout", ServerScroll)
+    ServerLayout.Padding = UDim.new(0, 6)
+    
+    local servers = {
+        {Name = "🇺🇸 US West"}, {Name = "🇺🇸 US East"}, {Name = "🇪🇺 Europe"},
+        {Name = "🇦🇺 Australia"}, {Name = "🇧🇷 Brazil"}, {Name = "🇸🇬 Singapore"}, {Name = "🇯🇵 Japan"},
+    }
+    
+    for _, server in ipairs(servers) do
+        local btn = Instance.new("TextButton", ServerScroll)
+        btn.Size = UDim2.new(1, 0, 0, 38)
+        btn.BackgroundColor3 = Colors.Dark
+        btn.Text = server.Name
+        btn.TextColor3 = Colors.White
+        btn.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+        btn.MouseButton1Click:Connect(function()
+            pcall(function() TeleportService:Teleport(game.PlaceId, plr) end)
+            ServerFrame:Destroy()
+            ShowGlobalBubble("جاري الانتقال...")
+        end)
+    end
+    
+    ServerLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+        ServerScroll.CanvasSize = UDim2.new(0, 0, 0, ServerLayout.AbsoluteContentSize.Y + 10)
+    end)
+end)
+
+-- ==================== أزرار التحكم ====================
+CloseBtn.MouseButton1Click:Connect(function()
+    if attackRunning then
+        attackRunning = false
+        if attackCoroutine then
+            task.cancel(attackCoroutine)
+            attackCoroutine = nil
+        end
+        AttackBtn.Text = "⚔️ هجوم ⚔️"
+        MakeButtonRainbow(AttackBtn, 0.003)
+    end
+    MainFrame.Visible = false
+    SideBtn.Visible = true
+end)
+
+SideBtn.MouseButton1Click:Connect(function()
+    MainFrame.Visible = true
+    SideBtn.Visible = false
+    MainFrame.Position = UDim2.new(0.5, -mainFrameWidth/2, 0.5, -mainFrameHeight/2)
+    TweenService:Create(MainFrame, TweenInfo.new(0.3), {
+        Position = UDim2.new(0.5, -mainFrameWidth/2, 0.5, -mainFrameHeight/2)
+    }):Play()
+end)
+
+SettingsBtn.MouseButton1Click:Connect(function()
+    UpdateCmdList()
+    if PrefixBox then PrefixBox.Text = currentPrefix end
+    SettingsFrame.Visible = true
+end)
+
+-- ==================== تشغيل نظام تتبع اللاعبين ====================
+local function SetupPlayerTracking()
+    Players.PlayerRemoving:Connect(function(player)
+        if TargetInput and TargetInput.Text == player.Name then
+            TargetInput.Text = ""
+            local notif = Instance.new("TextLabel", ScreenGui)
+            notif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.25, 280), 0, math.min(getScreenHeight() * 0.04, 35))
+            notif.Position = UDim2.new(0.5, -140, 0.8, 0)
+            notif.BackgroundColor3 = Color3.fromRGB(200, 100, 0)
+            notif.Text = "⚠️ " .. player.Name .. " خرج من السيرفر - تم مسح الهدف"
+            notif.TextColor3 = Colors.White
+            notif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+            Instance.new("UICorner", notif).CornerRadius = UDim.new(0, 10)
+            game:GetService("Debris"):AddItem(notif, 3)
+        end
+    end)
+    
+    local playersList = {}
+    for _, player in pairs(Players:GetPlayers()) do
+        if player ~= plr then
+            table.insert(playersList, player.Name)
+        end
+    end
+    
+    for i, playerName in ipairs(playersList) do
+        task.wait(0.8)
+        ShowPlayerNotification(playerName, true)
+    end
+    
+    Players.PlayerAdded:Connect(function(player)
+        if player ~= plr then
+            ShowPlayerNotification(player.Name, true)
+        end
+    end)
+    
+    Players.PlayerRemoving:Connect(function(player)
+        ShowPlayerNotification(player.Name, false)
+    end)
+end
+
+SetupPlayerTracking()
+
+-- ==================== إشعار ترحيبي ====================
+if discordName == "" then
+    task.wait(2)
+    local welcomeNotif = Instance.new("TextLabel", ScreenGui)
+    welcomeNotif.Size = UDim2.new(0, math.min(getScreenWidth() * 0.9, 400), 0, math.min(getScreenHeight() * 0.12, 75))
+    welcomeNotif.Position = UDim2.new(0.5, -math.min(getScreenWidth() * 0.45, 200), 0.3, 0)
+    welcomeNotif.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+    welcomeNotif.Text = "👑 مرحباً بك في سكربت Moen_King 👑\n💬 اضغط على زر 💬 لإدخال اسمك في ديسكورد\n⚔️ زر هجوم - يرسل العدد اللي تحدده\n📦 زر 📦 لفتح قائمة السكربتات الجاهزة\n🖱️ اسحب اللوحة من الرأس لتحريكها"
+    welcomeNotif.TextColor3 = Color3.fromRGB(255, 215, 0)
+    welcomeNotif.TextSize = math.max(9, math.min(13, getScreenWidth() * 0.012))
+    welcomeNotif.Font = Enum.Font.GothamBold
+    Instance.new("UICorner", welcomeNotif).CornerRadius = UDim.new(0, 12)
+    game:GetService("Debris"):AddItem(welcomeNotif, 8)
+end
+
+print("═══════════════════════════════════════════════════")
+print("✅ سكربت Moen_King المتكامل 👑 جاهز!")
+print("🎨 شاشة تحميل بتصميم جديد وجذاب")
+print("📱 متوافق مع جميع الأجهزة (iOS - Android - PC - Tablet)")
+print("🖥️ دعم كامل للشاشات المختلفة (Responsive)")
+print("⚔️ زر هجوم - يرسل العدد اللي تحدده")
+print("📦 زر 📦 - يفتح قائمة السكربتات الجاهزة")
+print("🖱️ اللوحة قابلة للسحب - اسحب من الرأس")
+print("📋 زر نسخ الاسم - ينسخ اسم الهدف بضغطة واحدة")
+print("🔥 زر نسخ الكل - ينسخ جميع أسماء اللاعبين")
+print("👥 نظام دخول وخروج اللاعبين")
+print("👤 راس مخفي - زر لتخفي الرأس")
+print("🦒 تمديد جسم - زر لتمديد الجسم (مصلح 100%)")
+print("🛡️ حمايه - زر للحماية")
+print("💬 لوحة ديسكورد جانبية")
+print("🎨 جميع الأزرار بألوان قوس قزح متحركة")
+print("🌈 شاشة تحميل أنيقة")
+print("📋 اسم المطور: fahad_moen3")
+print("═══════════════════════════════════════════════════")
